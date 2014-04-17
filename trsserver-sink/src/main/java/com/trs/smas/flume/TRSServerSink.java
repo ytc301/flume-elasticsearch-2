@@ -5,16 +5,24 @@
  */
 package com.trs.smas.flume;
 
+import java.io.IOException;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+
 import org.apache.flume.Channel;
+import org.apache.flume.ChannelException;
 import org.apache.flume.Context;
-import org.apache.flume.CounterGroup;
 import org.apache.flume.Event;
 import org.apache.flume.EventDeliveryException;
 import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
+import org.apache.flume.instrumentation.SinkCounter;
 import org.apache.flume.sink.AbstractSink;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 /**
  * TODO
@@ -27,12 +35,13 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 	private static final Logger LOG = LoggerFactory
 			.getLogger(TRSServerSink.class);
 
-	private CounterGroup counterGroup = new CounterGroup();;
+	private SinkCounter sinkCounter;
 	private int batchSize = 20;
+	private Path bufferDir;
 
 	@Override
 	public synchronized void start() {
-		counterGroup.setName(this.getName());
+		sinkCounter.start();
 		super.start();
 
 	}
@@ -40,6 +49,7 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 	@Override
 	public synchronized void stop() {
 		super.stop();
+		sinkCounter.stop();
 	}
 
 	/*
@@ -51,37 +61,53 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 		Status status = Status.READY;
 
 		Channel channel = getChannel();
+		Path batch = null;
+		try {
+			batch = Files.createTempFile(bufferDir, getName(), ".trs");
+		} catch (IOException e) {
+			LOG.error("Unable to create buffer at "+bufferDir.toString(),e);
+			return Status.BACKOFF;
+		}
+		
 		Transaction transaction = channel.getTransaction();
-		Event event = null;
-//		long eventCounter = counterGroup.get("events.success");
-
 		try {
 			transaction.begin();
 			int i = 0;
 			for (i = 0; i < batchSize; i++) {
-				event = channel.take();
-				if(event == null){
-					status = Status.BACKOFF;
+				Event event = channel.take();
+				if (event == null) {
 					break;
 				}
-				System.out.println(new String(event.getBody()));
-				// TODO save to file
-				// if (++eventCounter % logEveryNEvents == 0) {
-				// logger.info("Null sink {} successful processed {} events.",
-				// getName(), eventCounter);
-				// }
+				Files.write(batch, event.getBody(),StandardOpenOption.APPEND);
 			}
+
+
+			if (i == 0) {
+				sinkCounter.incrementBatchEmptyCount();
+				status = Status.BACKOFF;
+				Files.delete(batch);
+			} else {
+				if (i < batchSize) {
+					sinkCounter.incrementBatchUnderflowCount();
+				} else {
+					sinkCounter.incrementBatchCompleteCount();
+				}
+				sinkCounter.addToEventDrainAttemptCount(i);
+				// TODO loadrecord client.appendBatch(batch);
+			}
+
 			transaction.commit();
-			// TODO load
-			counterGroup.addAndGet("events.success",
-					(long) Math.min(batchSize, i));
-			counterGroup.incrementAndGet("transaction.success");
+			sinkCounter.addToEventDrainSuccessCount(i);
+		} catch (ChannelException e) {
+			transaction.rollback();
+			LOG.error(
+					"Unable to get event from" + " channel "
+							+ channel.getName(), e);
+			return Status.BACKOFF;
 		} catch (Exception ex) {
 			transaction.rollback();
-			counterGroup.incrementAndGet("transaction.failed");
 			LOG.error("Failed to deliver event. Exception follows.", ex);
-			throw new EventDeliveryException("Failed to deliver event: "
-					+ event, ex);
+			throw new EventDeliveryException("Failed to deliver event", ex);
 		} finally {
 			transaction.close();
 		}
@@ -97,6 +123,10 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 	 */
 	public void configure(Context context) {
 		batchSize = context.getInteger("batchSize", 20);
+		bufferDir = FileSystems.getDefault().getPath(context.getString("bufferDir"));
+		if (sinkCounter == null) {
+			sinkCounter = new SinkCounter(getName());
+		}
 	}
 
 }
