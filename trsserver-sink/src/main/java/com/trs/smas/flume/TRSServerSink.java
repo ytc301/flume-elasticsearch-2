@@ -9,8 +9,10 @@ import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 
+import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Channel;
 import org.apache.flume.ChannelException;
 import org.apache.flume.Context;
@@ -25,6 +27,7 @@ import org.slf4j.LoggerFactory;
 
 import com.trs.client.RecordReport;
 import com.trs.client.TRSConnection;
+import com.trs.client.TRSConstant;
 import com.trs.client.TRSException;
 
 /**
@@ -98,7 +101,6 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 				Files.write(batch, event.getBody(),StandardOpenOption.APPEND);
 			}
 
-
 			if (i == 0) {
 				sinkCounter.incrementBatchEmptyCount();
 				status = Status.BACKOFF;
@@ -110,8 +112,13 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 					sinkCounter.incrementBatchCompleteCount();
 				}
 				sinkCounter.addToEventDrainAttemptCount(i);
-				RecordReport report = connection.loadRecords(database, username, batch.toString(), null, true);
-				LOG.info("{} loaded. success: "+ report.lSuccessNum +", failure: "+report.lFailureNum, batch.toString());
+				TRSConnection.setCharset(TRSConstant.TCE_CHARSET_UTF8, false);
+				RecordReport report = connection.loadRecords(database, username, batch.toString(), null, false);
+				LOG.info("{} loaded. success: "+ report.lSuccessNum +", failure: "+report.lFailureNum + "", batch.toString());
+				if( !StringUtils.isEmpty(report.WrongFile ) ){//Backup
+					Path errorFile = FileSystems.getDefault().getPath(report.WrongFile);
+					Files.copy(errorFile, bufferDir.resolve( String.format("{}.{}",System.currentTimeMillis(),errorFile.getFileName().toString())), StandardCopyOption.REPLACE_EXISTING);
+				}
 				Files.delete(batch);
 			}
 
