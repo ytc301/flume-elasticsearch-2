@@ -43,7 +43,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	private String password;
 	private String database;
 	private String filter;
-	
+	private String[] fields;
 	
 	private TRSConnection connection;
 	private Watermark watermark;
@@ -59,6 +59,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 		password = context.getString("password");
 		database = context.getString("database");
 		filter = context.getString("filter");
+		fields = context.getString("fields").split(";");
 		String watermarkField = context.getString("watermark");
 		String from = context.getString("from");
 		watermark = new Watermark(watermarkField, from);
@@ -108,7 +109,13 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 			resultSet.moveNext();
 			try {
 				TRSRecord record = resultSet.get();
-				buffer.add(EventBuilder.withBody(record.getString("IR_URLTITLE").getBytes()));
+				StringBuffer strBuf = new StringBuffer();
+				strBuf.append("<REC>\n");
+				for(String field : fields){
+					strBuf.append(String.format("<%s>=%s", field, record.getString(field)));
+					strBuf.append("\n");
+				}
+				buffer.add(EventBuilder.withBody(strBuf.toString().getBytes()));
 				watermark.rise(record.getString(watermark.getIdentifier()));
 			} catch (TRSException e) {
 				LOG.error("can not read data from resultset "+watermark,e);
