@@ -36,14 +36,14 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	
 	private static final Logger LOG = LoggerFactory.getLogger(TRSHybaseSource.class);
 	
-	private static final int MAX_SIZE_OF_RESULTSET = 50;
-	
 	private String url;
 	private String username;
 	private String password;
 	private String database;
 	private String filter;
 	private String[] fields;
+	
+	private int batchSize;
 	
 	private TRSConnection connection;
 	private Watermark watermark;
@@ -59,10 +59,11 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 		password = context.getString("password");
 		database = context.getString("database");
 		filter = context.getString("filter");
-		fields = context.getString("fields").split(";");
 		String watermarkField = context.getString("watermark");
 		String from = context.getString("from");
 		watermark = new Watermark(watermarkField, from);
+		fields = context.getString("fields").split(";");
+		batchSize = context.getInteger("batchSize", 1000);
 		
 		if(sourceCounter == null){
 			sourceCounter = new SourceCounter(getName());
@@ -92,11 +93,11 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	 */
 	public Status process() throws EventDeliveryException {
 		Status status = Status.READY;
-		List<Event> buffer = new ArrayList<Event>(MAX_SIZE_OF_RESULTSET);
+		List<Event> buffer = new ArrayList<Event>(batchSize);
 		String query = StringUtils.isEmpty(watermark.getCursor()) ? filter : watermark.getIdentifier() + ": [\"" + watermark.getCursor() + "\" TO *}" + ( StringUtils.isEmpty(filter)? "" : " AND " + filter);
 		TRSResultSet resultSet = null;
 		try {
-			resultSet = connection.executeSelect(this.database, query, watermark.getOffset(), MAX_SIZE_OF_RESULTSET, new SearchParams().setSortMethod("+" + watermark.getIdentifier()));
+			resultSet = connection.executeSelect(this.database, query, watermark.getOffset(), batchSize, new SearchParams().setSortMethod("+" + watermark.getIdentifier()));
 		} catch (TRSException e) {
 			LOG.error("fail to select "+database+" by "+query,e);
 			return Status.BACKOFF;
@@ -105,14 +106,14 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 			resultSet.close();
 			return Status.BACKOFF;
 		}
-		for (int i = 0; i < Math.min(MAX_SIZE_OF_RESULTSET, resultSet.size()); i++) {
+		for (int i = 0; i < Math.min(batchSize, resultSet.size()); i++) {
 			resultSet.moveNext();
 			try {
 				TRSRecord record = resultSet.get();
-				StringBuffer strBuf = new StringBuffer();
+				StringBuilder strBuf = new StringBuilder();
 				strBuf.append("<REC>\n");
 				for(String field : fields){
-					strBuf.append(String.format("<%s>=%s", field, record.getString(field)));
+					strBuf.append(String.format("<%s>=%s", field, StringUtils.defaultString(record.getString(field))));
 					strBuf.append("\n");
 				}
 				buffer.add(EventBuilder.withBody(strBuf.toString().getBytes()));

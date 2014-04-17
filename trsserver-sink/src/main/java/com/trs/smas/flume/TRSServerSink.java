@@ -23,6 +23,9 @@ import org.apache.flume.sink.AbstractSink;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.trs.client.RecordReport;
+import com.trs.client.TRSConnection;
+import com.trs.client.TRSException;
 
 /**
  * TODO
@@ -35,19 +38,33 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 	private static final Logger LOG = LoggerFactory
 			.getLogger(TRSServerSink.class);
 
+	private String host;
+	private String port;
+	private String username;
+	private String password;
+	private String database;
+	
+	private TRSConnection connection;
+	
 	private SinkCounter sinkCounter;
-	private int batchSize = 20;
+	private int batchSize;
 	private Path bufferDir;
 
 	@Override
 	public synchronized void start() {
 		sinkCounter.start();
 		super.start();
-
+		try {
+			connection = new TRSConnection();
+			connection.connect(host, port, username, password);
+		} catch (TRSException e) {
+			throw new RuntimeException("Unable to create connection to trsserver", e);
+		}
 	}
 
 	@Override
 	public synchronized void stop() {
+		connection.close();
 		super.stop();
 		sinkCounter.stop();
 	}
@@ -85,7 +102,7 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 			if (i == 0) {
 				sinkCounter.incrementBatchEmptyCount();
 				status = Status.BACKOFF;
-				Files.delete(batch);
+				Files.delete(batch.toAbsolutePath());
 			} else {
 				if (i < batchSize) {
 					sinkCounter.incrementBatchUnderflowCount();
@@ -93,7 +110,9 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 					sinkCounter.incrementBatchCompleteCount();
 				}
 				sinkCounter.addToEventDrainAttemptCount(i);
-				// TODO loadrecord client.appendBatch(batch);
+				RecordReport report = connection.loadRecords(database, username, batch.toString(), null, true);
+				LOG.info("{} loaded. success: "+ report.lSuccessNum +", failure: "+report.lFailureNum, batch.toString());
+				Files.delete(batch);
 			}
 
 			transaction.commit();
@@ -122,7 +141,12 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 	 * org.apache.flume.conf.Configurable#configure(org.apache.flume.Context)
 	 */
 	public void configure(Context context) {
-		batchSize = context.getInteger("batchSize", 20);
+		host = context.getString("host");
+		port = context.getString("port","8888");
+		username = context.getString("username","system");
+		password = context.getString("password","manager");
+		database = context.getString("database");
+		batchSize = context.getInteger("batchSize", 1000);
 		bufferDir = FileSystems.getDefault().getPath(context.getString("bufferDir"));
 		if (sinkCounter == null) {
 			sinkCounter = new SinkCounter(getName());
