@@ -1,7 +1,7 @@
 /**
  * Title:		TRS SMAS
  * Copyright:	Copyright(c) 2011-2014,TRS. All rights reserved.
- * Company:		北京拓尔思信息技术股份有限公司(www.trs.com.cn)
+ * Company:		���������������������������������������������(www.trs.com.cn)
  */
 package com.trs.smas.flume;
 
@@ -52,6 +52,7 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 	private SinkCounter sinkCounter;
 	private int batchSize;
 	private Path bufferDir;
+	private Path backupDir;
 
 	@Override
 	public synchronized void start() {
@@ -113,11 +114,12 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 				}
 				sinkCounter.addToEventDrainAttemptCount(i);
 				TRSConnection.setCharset(TRSConstant.TCE_CHARSET_UTF8, false);
+				connection.setBufferPath(backupDir.toString());
 				RecordReport report = connection.loadRecords(database, username, batch.toString(), null, false);
 				LOG.info("{} loaded on {}. success: "+ report.lSuccessNum +", failure: "+report.lFailureNum + "", batch.toString(), getName());
 				if( !StringUtils.isEmpty(report.WrongFile ) ){//Backup
 					Path errorFile = FileSystems.getDefault().getPath(report.WrongFile);
-					Files.copy(errorFile, bufferDir.resolve( String.format("%s.%s",System.currentTimeMillis(),errorFile.getFileName().toString())), StandardCopyOption.REPLACE_EXISTING);
+					Files.copy(batch, backupDir.resolve( String.format("%s.%s.%s", errorFile.getFileName().toString(), System.currentTimeMillis(), batch.getFileName().toString())), StandardCopyOption.REPLACE_EXISTING);
 				}
 				Files.delete(batch);
 			}
@@ -155,6 +157,7 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 		database = context.getString("database");
 		batchSize = context.getInteger("batchSize", 1000);
 		bufferDir = FileSystems.getDefault().getPath(context.getString("bufferDir"));
+		backupDir = FileSystems.getDefault().getPath(context.getString("backupDir"));
 		if (sinkCounter == null) {
 			sinkCounter = new SinkCounter(getName());
 		}
