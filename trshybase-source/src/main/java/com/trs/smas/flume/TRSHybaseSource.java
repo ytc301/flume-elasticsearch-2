@@ -5,6 +5,12 @@
  */
 package com.trs.smas.flume;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -42,6 +48,9 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	private String database;
 	private String filter;
 	private String[] fields;
+	private String watermarkField;
+	private String from;
+	private Path checkpoint;
 	
 	private int batchSize;
 	
@@ -59,9 +68,9 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 		password = context.getString("password");
 		database = context.getString("database");
 		filter = context.getString("filter");
-		String watermarkField = context.getString("watermark");
-		String from = context.getString("from");
-		watermark = new Watermark(watermarkField, from);
+		watermarkField = context.getString("watermark");
+		from = context.getString("from");
+		checkpoint = FileSystems.getDefault().getPath(context.getString("checkpoint"));
 		fields = context.getString("fields").split(";");
 		batchSize = context.getInteger("batchSize", 1000);
 		
@@ -72,6 +81,18 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 
 	@Override
 	public synchronized void start() {
+		//初始化watermark
+		if(Files.exists(checkpoint)){
+			List<String> options = null;
+			try {
+				options = Files.readAllLines(checkpoint, StandardCharsets.UTF_8);
+			} catch (IOException e) {
+				LOG.error("watemark file init error.", e);
+			}
+			watermark = new Watermark(watermarkField, options.get(0), Long.parseLong(options.get(1)));
+		}else {
+			watermark = new Watermark(watermarkField, from);
+		}
 		connection = new TRSConnection(this.url, this.username, this.password, new ConnectParams());
 		sourceCounter.start();
 		super.start();
@@ -83,6 +104,12 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 			connection.close();
 		} catch (TRSException e) {
 			LOG.warn("closing hybase connection failed.", e);
+		}
+		//保存watermark
+		try {
+			Files.write(checkpoint, (watermark.getCursor() + "\n" + watermark.getOffset()).getBytes(), StandardOpenOption.CREATE);
+		} catch (IOException e) {
+			LOG.error("watermark file create file.", e);
 		}
 		super.stop();
 		sourceCounter.stop();

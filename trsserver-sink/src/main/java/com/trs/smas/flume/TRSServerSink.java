@@ -46,9 +46,9 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 	private String username;
 	private String password;
 	private String database;
-	
+
 	private TRSConnection connection;
-	
+
 	private SinkCounter sinkCounter;
 	private int batchSize;
 	private Path bufferDir;
@@ -62,7 +62,8 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 			connection = new TRSConnection();
 			connection.connect(host, port, username, password);
 		} catch (TRSException e) {
-			throw new RuntimeException("Unable to create connection to trsserver", e);
+			throw new RuntimeException(
+					"Unable to create connection to trsserver", e);
 		}
 	}
 
@@ -86,10 +87,10 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 		try {
 			batch = Files.createTempFile(bufferDir, getName(), ".trs");
 		} catch (IOException e) {
-			LOG.error("Unable to create buffer at "+bufferDir.toString(),e);
+			LOG.error("Unable to create buffer at " + bufferDir.toString(), e);
 			return Status.BACKOFF;
 		}
-		
+
 		Transaction transaction = channel.getTransaction();
 		try {
 			transaction.begin();
@@ -99,7 +100,7 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 				if (event == null) {
 					break;
 				}
-				Files.write(batch, event.getBody(),StandardOpenOption.APPEND);
+				Files.write(batch, event.getBody(), StandardOpenOption.APPEND);
 			}
 
 			if (i == 0) {
@@ -115,13 +116,37 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 				sinkCounter.addToEventDrainAttemptCount(i);
 				TRSConnection.setCharset(TRSConstant.TCE_CHARSET_UTF8, false);
 				connection.setBufferPath(backupDir.toString());
-				RecordReport report = connection.loadRecords(database, username, batch.toString(), null, false);
-				LOG.info("{} loaded on {}. success: "+ report.lSuccessNum +", failure: "+report.lFailureNum + "", batch.toString(), getName());
-				if( !StringUtils.isEmpty(report.WrongFile ) ){//Backup
-					Path errorFile = FileSystems.getDefault().getPath(report.WrongFile);
-					Files.copy(batch, backupDir.resolve( String.format("%s.%s.%s", errorFile.getFileName().toString(), System.currentTimeMillis(), batch.getFileName().toString())), StandardCopyOption.REPLACE_EXISTING);
+
+				try {
+					RecordReport report = connection.loadRecords(database,
+							username, batch.toString(), null, false);
+
+					LOG.info("{} loaded. success: " + report.lSuccessNum
+							+ ", failure: " + report.lFailureNum + "",
+							batch.toString());
+					if (!StringUtils.isEmpty(report.WrongFile)) {// Backup
+						Path errorFile = FileSystems.getDefault().getPath(
+								report.WrongFile);
+						Files.move(errorFile, backupDir.resolve(String.format(
+								"%s.%s", System.currentTimeMillis(), 
+								errorFile.getFileName().toString())),
+								StandardCopyOption.REPLACE_EXISTING);
+						Files.move(batch, backupDir.resolve(String.format(
+								"%s.%s.%s", System.currentTimeMillis(),
+								errorFile.getFileName().toString(), 
+								batch.getFileName().toString())),
+								StandardCopyOption.REPLACE_EXISTING);
+					}else {
+						Files.delete(batch);
+					}	
+				} catch (TRSException e) {
+					Path errorFile = FileSystems.getDefault().getPath(e.getErrorString());
+					Files.move(errorFile, backupDir.resolve(String.format("%s.%s", System.currentTimeMillis(), errorFile.getFileName().toString())), StandardCopyOption.REPLACE_EXISTING);
+					Files.move(batch, backupDir.resolve(String.format("%s.%s",
+							System.currentTimeMillis(), 
+							batch.getFileName().toString())),
+							StandardCopyOption.REPLACE_EXISTING);
 				}
-				Files.delete(batch);
 			}
 
 			transaction.commit();
@@ -151,13 +176,17 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 	 */
 	public void configure(Context context) {
 		host = context.getString("host");
-		port = context.getString("port","8888");
-		username = context.getString("username","system");
-		password = context.getString("password","manager");
+		port = context.getString("port", "8888");
+		username = context.getString("username", "system");
+		password = context.getString("password", "manager");
 		database = context.getString("database");
 		batchSize = context.getInteger("batchSize", 1000);
-		bufferDir = FileSystems.getDefault().getPath(context.getString("bufferDir"));
-		backupDir = FileSystems.getDefault().getPath(context.getString("backupDir"));
+
+		bufferDir = FileSystems.getDefault().getPath(
+				context.getString("bufferDir"));
+		backupDir = FileSystems.getDefault().getPath(
+				context.getString("backupDir"));
+
 		if (sinkCounter == null) {
 			sinkCounter = new SinkCounter(getName());
 		}
