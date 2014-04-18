@@ -121,9 +121,7 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 					RecordReport report = connection.loadRecords(database,
 							username, batch.toString(), null, false);
 
-					LOG.info("{} loaded. success: " + report.lSuccessNum
-							+ ", failure: " + report.lFailureNum + "",
-							batch.toString());
+					LOG.info("{} loaded on {}. success: "+ report.lSuccessNum +", failure: "+report.lFailureNum + "", batch.toString(), getName());
 					if (!StringUtils.isEmpty(report.WrongFile)) {// Backup
 						Path errorFile = FileSystems.getDefault().getPath(
 								report.WrongFile);
