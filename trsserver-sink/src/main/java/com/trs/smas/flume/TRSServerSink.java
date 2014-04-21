@@ -122,6 +122,8 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 							username, batch.toString(), null, false);
 
 					LOG.info("{} loaded on {}. success: "+ report.lSuccessNum +", failure: "+report.lFailureNum + "", batch.toString(), getName());
+					sinkCounter.addToEventDrainSuccessCount(report.lSuccessNum);
+					
 					if (!StringUtils.isEmpty(report.WrongFile)) {// Backup
 						Path errorFile = FileSystems.getDefault().getPath(
 								report.WrongFile);
@@ -152,7 +154,6 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 			}
 
 			transaction.commit();
-			sinkCounter.addToEventDrainSuccessCount(i);
 		} catch (ChannelException e) {
 			transaction.rollback();
 			LOG.error(
