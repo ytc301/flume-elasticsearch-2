@@ -140,7 +140,8 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 				StringBuilder strBuf = new StringBuilder();
 				strBuf.append("<REC>\n");
 				for(String field : fields){
-					strBuf.append(String.format("<%s>=%s", field, StringUtils.defaultString(record.getString(field))));
+					String value = record.getString(field);
+					strBuf.append(String.format("<%s>=%s", field, StringUtils.defaultString(StringUtils.startsWith(value, "@") ? "//" + value : value)));
 					strBuf.append("\n");
 				}
 				buffer.add(EventBuilder.withBody(strBuf.toString().getBytes()));

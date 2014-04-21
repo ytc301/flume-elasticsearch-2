@@ -139,7 +139,11 @@ public class TRSServerSink extends AbstractSink implements Configurable {
 					}	
 				} catch (TRSException e) {
 					Path errorFile = FileSystems.getDefault().getPath(e.getErrorString());
-					Files.move(errorFile, backupDir.resolve(String.format("%s.%s", System.currentTimeMillis(), errorFile.getFileName().toString())), StandardCopyOption.REPLACE_EXISTING);
+					if(Files.exists(errorFile)){
+						Files.move(errorFile, backupDir.resolve(String.format("%s.%s", System.currentTimeMillis(), errorFile.getFileName().toString())), StandardCopyOption.REPLACE_EXISTING);
+					} else {
+						Files.write(backupDir.resolve(String.format("%s.%s", System.currentTimeMillis(), "ERR")), e.getErrorString().getBytes(), StandardOpenOption.CREATE);
+					}
 					Files.move(batch, backupDir.resolve(String.format("%s.%s",
 							System.currentTimeMillis(), 
 							batch.getFileName().toString())),
