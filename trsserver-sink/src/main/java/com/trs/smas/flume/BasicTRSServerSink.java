@@ -31,15 +31,25 @@ import com.trs.client.TRSConstant;
 import com.trs.client.TRSException;
 
 /**
- * TODO
+ * 配置示例:<br/>
+ * <code>
+ * .type = com.trs.smas.flume.BasicTRSServerSink<br/>
+ * .bufferDir = /dev/shm/flume/sink<br/>
+ * .batchSize = 1000<br/>
+ * .host = 192.168.200.8<br/>
+ * .port = 8899<br/>
+ * .username = system<br/>
+ * .password = manager2013admin<br/>
+ * .database = spark_test<br/>
+ * </code>
  * 
  * @since huangshengbo @ Apr 17, 2014 12:53:59 AM
  * 
  */
-public class TRSServerSink extends AbstractSink implements Configurable {
+public class BasicTRSServerSink extends AbstractSink implements Configurable {
 
 	private static final Logger LOG = LoggerFactory
-			.getLogger(TRSServerSink.class);
+			.getLogger(BasicTRSServerSink.class);
 
 	private String host;
 	private String port;
