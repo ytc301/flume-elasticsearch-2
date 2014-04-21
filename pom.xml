@@ -13,6 +13,7 @@
 	<modules>
 		<module>trshybase-source</module>
 		<module>trsserver-sink</module>
+		<module>regex-mapper-interceptor</module>
 	</modules>
 
 	<properties>
