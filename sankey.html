@@ -44,26 +44,35 @@
 
     var normalize = function(graph, metrics){
         var flow = {"nodes":[],"links":[]};
-        var nodes = d3.keys(metrics).concat(["Hybase","SERVER2","SERVER3","SERVER4","SERVER5","SERVER6","SERVER7","SERVER8"]);
+        var nodes = d3.keys(metrics);
         nodes.forEach(function(node){
           flow.nodes.push({"name": node});
         });
         nodes.forEach(function(node){
           if( metrics[node] && metrics[node].Type == "SOURCE" ){
-            flow.links.push( {"source": nodes.indexOf(graph[node].previous) ,
-                              "target": nodes.indexOf(node),
-                              "value":metrics[node].EventAcceptedCount} );
+            // source.next.foreach( (source, next, source.eventacceptedcount) )
+            graph[node].next.forEach(function(n){
+              flow.links.push( { "source": nodes.indexOf(node),
+                                 "target": nodes.indexOf(n),
+                                 "value": metrics[node].EventAcceptedCount} );
+            });
+            // flow.links.push( {"source": nodes.indexOf(graph[node].previous) ,
+            //                   "target": nodes.indexOf(node),
+            //                   "value":metrics[node].EventAcceptedCount} );
           }else if( metrics[node] && metrics[node].Type == "CHANNEL"){
-            flow.links.push( {"source": nodes.indexOf(graph[node].previous) ,
-                              "target": nodes.indexOf(node),
-                              "value":metrics[node].EventPutSuccessCount});
+            // ignore
+            // flow.links.push( {"source": nodes.indexOf(graph[node].previous) ,
+            //                   "target": nodes.indexOf(node),
+            //                   "value":metrics[node].EventPutSuccessCount});
           }else if( metrics[node] && metrics[node].Type == "SINK"){
-            flow.links.push( {"source": nodes.indexOf(graph[node].previous) ,
-                              "target": nodes.indexOf(node),
-                              "value":metrics[node].EventDrainAttemptCount});
+            graph[node].previous.forEach(function(p){
+              flow.links.push( { "source": nodes.indexOf(p) ,
+                                 "target": nodes.indexOf(node),
+                                 "value":metrics[node].EventDrainAttemptCount } );
+            });
             flow.links.push( {"source": nodes.indexOf(node) ,
-                              "target": nodes.indexOf(graph[node].next),
-                              "value":metrics[node].EventDrainSuccessCount});
+                              "target": flow.nodes.push({"name": "[" + node + "]"}) - 1 ,
+                              "value":metrics[node].EventDrainSuccessCount} );
           }
         });
         return flow;
@@ -144,15 +153,14 @@
     };
 
     d3.json("metrics.json", function(metrics) {
-      var flow = normalize({ "SOURCE.r1": { "previous": "Hybase" },
-                    "CHANNEL.c1":{ "previous": "SOURCE.r1" },
-                    "SINK.k1":{ "previous": "CHANNEL.c1", "next": "SERVER2" },
-                    "SINK.k2":{ "previous": "CHANNEL.c1", "next": "SERVER3" },
-                    "SINK.k3":{ "previous": "CHANNEL.c1", "next": "SERVER4" },
-                    "SINK.k4":{ "previous": "CHANNEL.c1", "next": "SERVER5" },
-                    "SINK.k5":{ "previous": "CHANNEL.c1", "next": "SERVER6" },
-                    "SINK.k6":{ "previous": "CHANNEL.c1", "next": "SERVER7" },
-                    "SINK.k7":{ "previous": "CHANNEL.c1", "next": "SERVER8" }},metrics);
+      var flow = normalize({ "SOURCE.r1": { "next":[ "CHANNEL.c1"] },
+                    "SINK.k1":{ "previous": ["CHANNEL.c1"], "next": "SERVER2" },
+                    "SINK.k2":{ "previous": ["CHANNEL.c1"], "next": "SERVER3" },
+                    "SINK.k3":{ "previous": ["CHANNEL.c1"], "next": "SERVER4" },
+                    "SINK.k4":{ "previous": ["CHANNEL.c1"], "next": "SERVER5" },
+                    "SINK.k5":{ "previous": ["CHANNEL.c1"], "next": "SERVER6" },
+                    "SINK.k6":{ "previous": ["CHANNEL.c1"], "next": "SERVER7" },
+                    "SINK.k7":{ "previous": ["CHANNEL.c1"], "next": "SERVER8" }},metrics);
       update(flow);
     });
 
