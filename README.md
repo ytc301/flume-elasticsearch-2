@@ -6,6 +6,8 @@
 * mkdir -p plugins.d/trshybase-source plugins.d/trsserver-sink
 * copy trshybase-source/target/trshybase-source.jar to $FLUME_HOME/plugins.d/trshybase-source/lib/
 * copy trshybase-source/target/dependency/*.jar to $FLUME_HOME/plugins.d/trshybase-source/libext/
+* copy trsserver-source/target/trsserver-source.jar to $FLUME_HOME/plugins.d/trsserver-source/lib/
+* copy trsserver-source/target/dependency/*.jar to $FLUME_HOME/plugins.d/trsserver-source/libext/
 * copy trsserver-sink/target/trsserver-sink.jar to $FLUME_HOME/plugins.d/trsserver-sink/lib/
 * copy trsserver-sink/target/dependency/*.jar to $FLUME_HOME/plugins.d/trsserver-sink/libext/
 * copy libtrsbean.so to $FLUME_HOME/plugins.d/trsserver-sink/native/
