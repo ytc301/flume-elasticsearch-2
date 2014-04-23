@@ -20,6 +20,12 @@
 
 	<dependencies>
 		<dependency>
+			<groupId>com.google.guava</groupId>
+			<artifactId>guava</artifactId>
+			<version>16.0.1</version>
+		</dependency>
+	
+		<dependency>
 			<groupId>com.trs</groupId>
 			<artifactId>trshybase-api</artifactId>
 			<version>7.0.8002-20131127-r17308</version>

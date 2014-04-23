@@ -5,12 +5,9 @@
  */
 package com.trs.smas.flume;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -62,6 +59,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	private String[] fields;
 	private String[] headers;
 	private String watermarkField;
+	private String identifierField;
 	private String from;
 	private Path checkpoint;
 	
@@ -102,13 +100,13 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	public synchronized void start() {
 		//初始化watermark
 		if(Files.exists(checkpoint)){
-			List<String> options = null;
-			try {
-				options = Files.readAllLines(checkpoint, StandardCharsets.UTF_8);
-			} catch (IOException e) {
-				LOG.error("watemark file init error.", e);
-			}
-			watermark = new Watermark(watermarkField, options.get(0), Long.parseLong(options.get(1)));
+//TODO			List<String> options = null;
+//			try {
+//				options = Files.readAllLines(checkpoint, StandardCharsets.UTF_8);
+//			} catch (IOException e) {
+//				LOG.error("watemark file init error.", e);
+//			}
+//			watermark = new Watermark(watermarkField, options.get(0));
 		}else {
 			watermark = new Watermark(watermarkField, from);
 		}
@@ -124,12 +122,12 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 		} catch (TRSException e) {
 			LOG.warn("closing hybase connection failed.", e);
 		}
-		//保存watermark
-		try {
-			Files.write(checkpoint, (watermark.getCursor() + "\n" + watermark.getOffset()).getBytes(), StandardOpenOption.CREATE);
-		} catch (IOException e) {
-			LOG.error("watermark file create file.", e);
-		}
+//TODO		//保存watermark
+//		try {
+//			Files.write(checkpoint, (watermark.getCursor() + "\n" + watermark.getOffset()).getBytes(), StandardOpenOption.CREATE);
+//		} catch (IOException e) {
+//			LOG.error("watermark file create file.", e);
+//		}
 		super.stop();
 		sourceCounter.stop();
 	}
@@ -140,10 +138,10 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	public Status process() throws EventDeliveryException {
 		Status status = Status.READY;
 		List<Event> buffer = new ArrayList<Event>(batchSize);
-		String query = StringUtils.isEmpty(watermark.getCursor()) ? filter : watermark.getIdentifier() + ": [\"" + watermark.getCursor() + "\" TO *}" + ( StringUtils.isEmpty(filter)? "" : " AND " + filter);
+		String query = StringUtils.isEmpty(watermark.getCursor()) ? filter : watermark.getApplyTo() + ": [\"" + watermark.getCursor() + "\" TO *}" + ( StringUtils.isEmpty(filter)? "" : " AND " + filter);
 		TRSResultSet resultSet = null;
 		try {
-			resultSet = connection.executeSelect(this.database, query, watermark.getOffset(), batchSize, new SearchParams().setSortMethod("+" + watermark.getIdentifier()));
+			resultSet = connection.executeSelect(this.database, query, 0, batchSize, new SearchParams().setSortMethod("+" + watermark.getApplyTo()));
 		} catch (TRSException e) {
 			LOG.error("fail to select "+database+" by "+query,e);
 			return Status.BACKOFF;
@@ -156,6 +154,12 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 			resultSet.moveNext();
 			try {
 				TRSRecord record = resultSet.get();
+				String mark = record.getString(watermark.getApplyTo());
+				String id = record.getString(identifierField);
+				if( watermark.isOverflow(mark, id)){
+					continue;
+				}
+				
 				StringBuilder strBuf = new StringBuilder();
 				strBuf.append("<REC>\n");
 				for(String field : fields){
@@ -168,7 +172,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 					header.put(key, record.getString(key));
 				}
 				buffer.add(EventBuilder.withBody(strBuf.toString().getBytes(),header));
-				watermark.rise(record.getString(watermark.getIdentifier()));
+				watermark.rise(mark, id);
 			} catch (TRSException e) {
 				LOG.error("can not read data from resultset "+watermark,e);
 				break;
