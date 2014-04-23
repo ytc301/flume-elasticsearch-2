@@ -16,6 +16,7 @@
 		<module>trsserver-sink</module>
 		<module>regex-mapper-interceptor</module>
 	        <module>trsserver-source</module>
+		<module>nlp-interceptor</module>
   	</modules>
 
 	<properties>
