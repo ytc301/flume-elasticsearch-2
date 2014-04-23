@@ -5,67 +5,71 @@
  */
 package com.trs.smas.flume;
 
+import java.io.Serializable;
+import java.nio.charset.Charset;
+
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.builder.ToStringBuilder;
 
+import com.google.common.hash.BloomFilter;
+import com.google.common.hash.Funnels;
+
 /**
  * TODO
- * @since huangshengbo @ Apr 16, 2014 9:45:20 PM
- *
+ * 
+ * @since huangshengbo @ Apr 22, 2014 11:00:24 PM
+ * 
  */
-public class Watermark {
+public class Watermark implements Serializable{
 
-    private String identifier;
-    private String cursor;
-    private long offset = 0L;
+	private static final long serialVersionUID = 2905794392669383111L;
+	
+	private String applyTo;
+	private String cursor;
+	private BloomFilter<CharSequence> overflowedIds;
+	private long offset = 0L;// 无业务价值,只是用于调试监控
 
-    public Watermark(String identifier, String cursor){
-        this(identifier, cursor, 0L);
-    }
+	public Watermark(String applyTo, String cursor) {
+		this.applyTo = applyTo;
+		this.cursor = cursor;
+		this.overflowedIds = BloomFilter.create(
+				Funnels.stringFunnel(Charset.forName("UTF-8")), 5000,
+				0.0003);
+	}
 
-    public Watermark(String identifier, String cursor, long offset){
-        this.identifier = identifier;
-        this.cursor = cursor;
-        this.offset = offset;
-    }
+	public String getApplyTo() {
+		return this.applyTo;
+	}
+	
+	public String getCursor() {
+		return this.cursor;
+	}
 
-    public String getIdentifier() {
-        return identifier;
-    }
+	public void rise(String mark, String id) {
+		if (StringUtils.isEmpty(this.cursor) || this.cursor.compareTo(mark) < 0) {
+			this.cursor = mark;
+			this.overflowedIds = BloomFilter.create(
+					Funnels.stringFunnel(Charset.forName("UTF-8")), 5000,
+					0.0003);
+			this.overflowedIds.put(id);
+			this.offset = 1;
+		} else {
+			overflowedIds.put(id);
+			this.offset ++ ;
+		}
+	}
 
-    public void setIdentifier(String identifier) {
-        this.identifier = identifier;
-    }
-
-    public String getCursor() {
-        return cursor;
-    }
-
-    public void setCursor(String cursor) {
-        this.cursor = cursor;
-    }
-
-    public long getOffset() {
-        return offset;
-    }
-
-    public void setOffset(long offset) {
-        this.offset = offset;
-    }
-
-    public void rise(String cursor){
-        if(StringUtils.isEmpty(this.cursor) || this.cursor.compareTo(cursor) < 0){
-            this.cursor = cursor;
-            this.offset = 1;
-        }else { /* if(this.cursor.equals(cursor)) 注释检查，增强容错性，如数据中该字段值为空，或不按顺序增长等等 */
-            this.offset++;
-        }
-    }
-
+	public boolean isOverflow(String mark, String id) {
+		// TODO comparison > 0 时是否要warn
+		int comparison = this.cursor.compareTo(mark);
+		return (comparison > 0)
+				|| ((comparison == 0) && this.overflowedIds.mightContain(id));
+	}
+	
     public String toString(){
         return new ToStringBuilder(this)
-                .append("identifier", getIdentifier())
+                .append("applyTo", getApplyTo())
                 .append("cursor", getCursor())
-                .append("offset", getOffset()).toString();
+                .append("offset", offset).toString();
     }
 }

@@ -64,6 +64,7 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 	private String[] fields;
 	private String[] headers;
 	private String watermarkField;
+	private String identifierField;
 	private String from;
 	private Path checkpoint;
 
@@ -88,6 +89,7 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 		database = context.getString("database");
 		filter = context.getString("filter");
 		watermarkField = context.getString("watermark");
+		identifierField = context.getString("identifierField");
 		from = context.getString("from");
 		checkpoint = FileSystems.getDefault().getPath(
 				context.getString("checkpoint"));
@@ -108,19 +110,19 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 	@Override
 	public synchronized void start() {
 		// 初始化watermark
-		if (Files.exists(checkpoint)) {
-			List<String> options = null;
-			try {
-				options = Files
-						.readAllLines(checkpoint, StandardCharsets.UTF_8);
-			} catch (IOException e) {
-				LOG.error("watemark file init error.", e);
-			}
-			watermark = new Watermark(watermarkField, options.get(0),
-					Long.parseLong(options.get(1)));
-		} else {
-			watermark = new Watermark(watermarkField, from);
-		}
+		// if (Files.exists(checkpoint)) {
+		// List<String> options = null;
+		// try {
+		// options = Files
+		// .readAllLines(checkpoint, StandardCharsets.UTF_8);
+		// } catch (IOException e) {
+		// LOG.error("watemark file init error.", e);
+		// }
+		// watermark = new Watermark(watermarkField, options.get(0),
+		// Long.parseLong(options.get(1)));
+		// } else {
+		watermark = new Watermark(watermarkField, from);
+		// }
 		try {
 			connection = new TRSConnection();
 			connection.connect(host, port, username, password);
@@ -136,12 +138,12 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 	public synchronized void stop() {
 		connection.close();
 		// 保存watermark
-		try {
-			Files.write(checkpoint, (watermark.getCursor() + "\n" + watermark
-					.getOffset()).getBytes(), StandardOpenOption.CREATE);
-		} catch (IOException e) {
-			LOG.error("watermark file create file.", e);
-		}
+		// try {
+		// Files.write(checkpoint, (watermark.getCursor() + "\n" + watermark
+		// .getOffset()).getBytes(), StandardOpenOption.CREATE);
+		// } catch (IOException e) {
+		// LOG.error("watermark file create file.", e);
+		// }
 		super.stop();
 		sourceCounter.stop();
 	}
@@ -155,11 +157,12 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 		Status status = Status.READY;
 		List<Event> buffer = new ArrayList<Event>(batchSize);
 		String query = StringUtils.isEmpty(watermark.getCursor()) ? filter
-				: watermark.getIdentifier() + " >= " + watermark.getCursor()
+				: watermark.getApplyTo() + " >= " + watermark.getCursor()
 						+ (StringUtils.isEmpty(filter) ? "" : " AND " + filter);
 		TRSResultSet resultSet = null;
 		try {
-			resultSet = connection.executeSelect(this.database, query, "+" + watermark.getIdentifier(), false);
+			resultSet = connection.executeSelect(this.database, query, "+"
+					+ watermark.getApplyTo(), false);
 		} catch (TRSException e) {
 			LOG.error("fail to select " + database + " by " + query, e);
 			return Status.BACKOFF;
@@ -168,10 +171,14 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 			resultSet.close();
 			return Status.BACKOFF;
 		}
-		for (long i = watermark.getOffset(); i < Math.min(batchSize,
-				resultSet.getRecordCount()); i++) {
+		for (long i = 0; i < Math.min(batchSize, resultSet.getRecordCount()); i++) {
 			try {
 				resultSet.moveTo(0, i);
+				String mark = resultSet.getString(watermark.getApplyTo());
+				String id = resultSet.getString(identifierField);
+				if( watermark.isOverflow(mark, id)){
+					continue;
+				}
 				StringBuilder strBuf = new StringBuilder();
 				strBuf.append("<REC>\n");
 				for (String field : fields) {
@@ -188,7 +195,7 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 				}
 				buffer.add(EventBuilder.withBody(strBuf.toString().getBytes(),
 						header));
-				watermark.rise(resultSet.getString(watermark.getIdentifier()));
+				watermark.rise(mark, id);
 			} catch (TRSException e) {
 				LOG.error("can not read data from resultset " + watermark, e);
 				break;
