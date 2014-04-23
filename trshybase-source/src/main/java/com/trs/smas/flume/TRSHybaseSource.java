@@ -59,14 +59,14 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	private String[] fields;
 	private String[] headers;
 	private String watermarkField;
-	private String identifierField;
+//	private String identifierField;
 	private String from;
 	private Path checkpoint;
 	
 	private int batchSize;
 	
 	private TRSConnection connection;
-	private DiscreteWatermark watermark;
+	private OffsetWatermark watermark;
 	
 	private SourceCounter sourceCounter;
 	
@@ -80,7 +80,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 		database = context.getString("database");
 		filter = context.getString("filter");
 		watermarkField = context.getString("watermark");
-		identifierField = context.getString("identifier");
+//		identifierField = context.getString("identifier");
 		from = context.getString("from");
 		checkpoint = FileSystems.getDefault().getPath(context.getString("checkpoint"));
 		fields = context.getString("fields").split(";");
@@ -101,14 +101,14 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	public synchronized void start() {
 		//初始化watermark
 		try {
-			watermark = DiscreteWatermark.loadFrom(checkpoint);
+			watermark = OffsetWatermark.loadFrom(checkpoint);
 		} catch (IOException e) {
 			LOG.error("Unable to load watermark from" + checkpoint, e);
 			throw new RuntimeException("watermark loading failed, you can delete "+ checkpoint + " and then restart.", e);
 		}
 		
 		if(watermark == null){
-			watermark = new DiscreteWatermark(watermarkField, from);
+			watermark = new OffsetWatermark(watermarkField, from);
 		}
 		connection = new TRSConnection(this.url, this.username, this.password, new ConnectParams());
 		sourceCounter.start();
@@ -139,9 +139,10 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 		Status status = Status.READY;
 		List<Event> buffer = new ArrayList<Event>(batchSize);
 		String query = StringUtils.isEmpty(watermark.getCursor()) ? filter : watermark.getApplyTo() + ": [\"" + watermark.getCursor() + "\" TO *}" + ( StringUtils.isEmpty(filter)? "" : " AND " + filter);
+		
 		TRSResultSet resultSet = null;
 		try {
-			resultSet = connection.executeSelect(this.database, query, 0, batchSize, new SearchParams().setSortMethod("+" + watermark.getApplyTo()));
+			resultSet = connection.executeSelect(this.database, query, watermark.getOffset(), batchSize, new SearchParams().setSortMethod("+" + watermark.getApplyTo() + ";+DOCID"));			
 		} catch (TRSException e) {
 			LOG.error("fail to select "+database+" by "+query,e);
 			return Status.BACKOFF;
@@ -154,11 +155,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 			resultSet.moveNext();
 			try {
 				TRSRecord record = resultSet.get();
-				String mark = record.getString(watermark.getApplyTo());
-				String id = record.getString(identifierField);
-				if( watermark.isOverflow(mark, id)){
-					continue;
-				}
+				
 				StringBuilder strBuf = new StringBuilder();
 				strBuf.append("<REC>\n");
 				for(String field : fields){
@@ -171,7 +168,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 					header.put(key, record.getString(key));
 				}
 				buffer.add(EventBuilder.withBody(strBuf.toString().getBytes(),header));
-				watermark.rise(mark, id);
+				watermark.rise( record.getString(watermark.getApplyTo()) );
 			} catch (TRSException e) {
 				LOG.error("can not read data from resultset "+watermark,e);
 				break;
