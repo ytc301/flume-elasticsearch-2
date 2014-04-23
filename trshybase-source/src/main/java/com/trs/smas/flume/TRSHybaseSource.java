@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
@@ -41,7 +43,7 @@ import com.trs.hybase.client.params.SearchParams;
  * .database = news<br/>
  * .watermark = IR_LOADTIME<br/>
  * .batchSize = 1000<br/>
- * .fields = IR_URLTITLE;IR_URLNAME;IR_CONTENT<br/>
+ * .body = <REC>\n<IR_URLTITLE>={IR_URLTITLE}\n<IR_URLNAME>={IR_URLNAME}\n<IR_CONTENT>={IR_CONTENT}\n<br/>
  * .headers = IR_GROUPNAME;IR_URLDATE<br/>
  * </code>
  * @since huangshengbo @ Apr 16, 2014 6:04:13 PM
@@ -56,7 +58,8 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	private String password;
 	private String database;
 	private String filter;
-	private String[] fields;
+	private String body;
+	private List<String> bodyArgs;
 	private String[] headers;
 	private String watermarkField;
 //	private String identifierField;
@@ -83,7 +86,17 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 //		identifierField = context.getString("identifier");
 		from = context.getString("from");
 		checkpoint = FileSystems.getDefault().getPath(context.getString("checkpoint"));
-		fields = context.getString("fields").split(";");
+		body = context.getString("body");
+		bodyArgs = new ArrayList<String>();
+		Pattern pattern = Pattern.compile("\\{(.*?)\\}");
+		Matcher matcher = pattern.matcher(body);
+		while (matcher.find()) {
+			bodyArgs.add(matcher.group(1));
+		}
+		for (String arg : bodyArgs) {
+			body = body.replace("{" + arg + "}", "%s");
+		}
+		
 		if(!StringUtils.isEmpty( context.getString("headers") )){
 			headers = context.getString("headers").split(";");
 		}else{
@@ -156,18 +169,17 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 			try {
 				TRSRecord record = resultSet.get();
 				
-				StringBuilder strBuf = new StringBuilder();
-				strBuf.append("<REC>\n");
-				for(String field : fields){
+				List<String> values = new ArrayList<String>(this.bodyArgs.size());
+				
+				for(String field : this.bodyArgs){
 					String value = record.getString(field);
-					strBuf.append(String.format("<%s>=%s", field, StringUtils.defaultString(StringUtils.startsWith(value, "@") ? "//" + value : value)));
-					strBuf.append("\n");
+					values.add(StringUtils.defaultString(StringUtils.startsWith(value, "@") ? "//" + value : value));
 				}
 				Map<String,String> header = new HashMap<String,String>(this.headers.length);
 				for(String key : this.headers){
 					header.put(key, record.getString(key));
 				}
-				buffer.add(EventBuilder.withBody(strBuf.toString().getBytes(),header));
+				buffer.add(EventBuilder.withBody(String.format(body, values.toArray()).getBytes(),header));
 				watermark.rise( record.getString(watermark.getApplyTo()) );
 			} catch (TRSException e) {
 				LOG.error("can not read data from resultset "+watermark,e);

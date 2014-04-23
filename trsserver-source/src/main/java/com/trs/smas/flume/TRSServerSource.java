@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
@@ -39,7 +41,7 @@ import com.trs.client.TRSResultSet;
  * .database = news<br/>
  * .watermark = IR_LOADTIME<br/>
  * .batchSize = 1000<br/>
- * .fields = IR_URLTITLE;IR_URLNAME;IR_CONTENT<br/>
+ * .body = <REC>\n<IR_URLTITLE>={IR_URLTITLE}\n<IR_URLNAME>={IR_URLNAME}\n<IR_CONTENT>={IR_CONTENT}\n<br/>
  * .headers = IR_GROUPNAME;IR_URLDATE<br/>
  * </code>
  * 
@@ -58,7 +60,8 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 	private String password;
 	private String database;
 	private String filter;
-	private String[] fields;
+	private String body;
+	private List<String> bodyArgs;
 	private String[] headers;
 	private String watermarkField;
 	private String identifierField;
@@ -90,7 +93,17 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 		from = context.getString("from");
 		checkpoint = FileSystems.getDefault().getPath(
 				context.getString("checkpoint"));
-		fields = context.getString("fields").split(";");
+		body = context.getString("body");
+		bodyArgs = new ArrayList<String>();
+		Pattern pattern = Pattern.compile("\\{(.*?)\\}");
+		Matcher matcher = pattern.matcher(body);
+		while (matcher.find()) {
+			bodyArgs.add(matcher.group(1));
+		}
+		for (String arg : bodyArgs) {
+			body = body.replace("{" + arg + "}", "%s");
+		}
+		
 		if (!StringUtils.isEmpty(context.getString("headers"))) {
 			headers = context.getString("headers").split(";");
 		} else {
@@ -111,13 +124,15 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 			watermark = DiscreteWatermark.loadFrom(checkpoint);
 		} catch (IOException e) {
 			LOG.error("Unable to load watermark from" + checkpoint, e);
-			throw new RuntimeException("watermark loading failed, you can delete "+ checkpoint + " and then restart.", e);
+			throw new RuntimeException(
+					"watermark loading failed, you can delete " + checkpoint
+							+ " and then restart.", e);
 		}
-		
-		if(watermark == null){
+
+		if (watermark == null) {
 			watermark = new DiscreteWatermark(watermarkField, from);
 		}
-		
+
 		try {
 			connection = new TRSConnection();
 			connection.connect(host, port, username, password);
@@ -136,7 +151,8 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 		try {
 			watermark.saveTo(checkpoint);
 		} catch (IOException e) {
-			LOG.error("Unable to save watermark "+ watermark +" to " + checkpoint, e);
+			LOG.error("Unable to save watermark " + watermark + " to "
+					+ checkpoint, e);
 		}
 		super.stop();
 		sourceCounter.stop();
@@ -165,7 +181,8 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 			resultSet.close();
 			return Status.BACKOFF;
 		}
-		for (long i = 0; buffer.size() < batchSize && i < resultSet.getRecordCount(); i++) {
+		for (long i = 0; buffer.size() < batchSize
+				&& i < resultSet.getRecordCount(); i++) {
 			try {
 				resultSet.moveTo(0, i);
 				String mark = resultSet.getString(watermark.getApplyTo());
@@ -173,21 +190,22 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 				if (watermark.isOverflow(mark, id)) {
 					continue;
 				}
-				StringBuilder strBuf = new StringBuilder();
-				strBuf.append("<REC>\n");
-				for (String field : fields) {
+
+				List<String> values = new ArrayList<String>(this.bodyArgs.size());
+
+				for (String field : this.bodyArgs) {
 					String value = resultSet.getString(field);
-					strBuf.append(String.format("<%s>=%s", field,
-							StringUtils.defaultString(StringUtils.startsWith(
-									value, "@") ? "//" + value : value)));
-					strBuf.append("\n");
+					values.add(StringUtils.defaultString(StringUtils
+							.startsWith(value, "@") ? "//" + value : value));
 				}
+
 				Map<String, String> header = new HashMap<String, String>(
 						this.headers.length);
 				for (String key : this.headers) {
 					header.put(key, resultSet.getString(key));
 				}
-				buffer.add(EventBuilder.withBody(strBuf.toString().getBytes(),
+				buffer.add(EventBuilder.withBody(
+						String.format(body, values.toArray()).getBytes(),
 						header));
 				watermark.rise(mark, id);
 			} catch (TRSException e) {
