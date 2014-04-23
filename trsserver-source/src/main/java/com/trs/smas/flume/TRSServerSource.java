@@ -170,7 +170,7 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 			resultSet.close();
 			return Status.BACKOFF;
 		}
-		for (long i = 0; i < Math.min(batchSize, resultSet.getRecordCount()); i++) {
+		for (long i = 0; buffer.size() < batchSize && i < resultSet.getRecordCount(); i++) {
 			try {
 				resultSet.moveTo(0, i);
 				String mark = resultSet.getString(watermark.getApplyTo());
