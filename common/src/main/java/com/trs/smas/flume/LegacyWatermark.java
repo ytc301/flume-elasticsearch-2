@@ -9,7 +9,8 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.builder.ToStringBuilder;
 
 /**
- * TODO
+ * Offset based watermark
+ * @deprecated using {@link Watermark}
  * @since huangshengbo @ Apr 16, 2014 9:45:20 PM
  *
  */

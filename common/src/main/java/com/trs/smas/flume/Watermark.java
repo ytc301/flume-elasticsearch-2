@@ -5,9 +5,14 @@
  */
 package com.trs.smas.flume;
 
+import java.io.IOException;
 import java.io.Serializable;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
+import org.apache.commons.lang.SerializationUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.builder.ToStringBuilder;
 
@@ -20,10 +25,10 @@ import com.google.common.hash.Funnels;
  * @since huangshengbo @ Apr 22, 2014 11:00:24 PM
  * 
  */
-public class Watermark implements Serializable{
+public class Watermark implements Serializable {
 
 	private static final long serialVersionUID = 2905794392669383111L;
-	
+
 	private String applyTo;
 	private String cursor;
 	private BloomFilter<CharSequence> overflowedIds;
@@ -33,14 +38,13 @@ public class Watermark implements Serializable{
 		this.applyTo = applyTo;
 		this.cursor = cursor;
 		this.overflowedIds = BloomFilter.create(
-				Funnels.stringFunnel(Charset.forName("UTF-8")), 5000,
-				0.0003);
+				Funnels.stringFunnel(Charset.forName("UTF-8")), 5000, 0.0003);
 	}
 
 	public String getApplyTo() {
 		return this.applyTo;
 	}
-	
+
 	public String getCursor() {
 		return this.cursor;
 	}
@@ -55,7 +59,7 @@ public class Watermark implements Serializable{
 			this.offset = 1;
 		} else {
 			overflowedIds.put(id);
-			this.offset ++ ;
+			this.offset++;
 		}
 	}
 
@@ -65,11 +69,28 @@ public class Watermark implements Serializable{
 		return (comparison > 0)
 				|| ((comparison == 0) && this.overflowedIds.mightContain(id));
 	}
+
+	/** 
+	 * 从文件加载watermark
+	 * @param path
+	 * @return 文件不存在时返回null
+	 * @throws IOException
+	 * @since huangshengbo @ Apr 23, 2014 11:02:14 AM
+	*/
+	public static Watermark loadFrom(Path path) throws IOException{
+		if(!Files.exists(path)){
+			return null;
+		}
+		return (Watermark)SerializationUtils.deserialize(Files.readAllBytes(path));
+	}
 	
-    public String toString(){
-        return new ToStringBuilder(this)
-                .append("applyTo", getApplyTo())
-                .append("cursor", getCursor())
-                .append("offset", offset).toString();
-    }
+	public void saveTo(Path path) throws IOException{
+		Files.write(path, SerializationUtils.serialize(this), StandardOpenOption.CREATE);
+	}
+	
+	public String toString() {
+		return new ToStringBuilder(this).append("applyTo", getApplyTo())
+				.append("cursor", getCursor()).append("offset", offset)
+				.toString();
+	}
 }
