@@ -34,9 +34,9 @@
 		</dependency>
 
 		<dependency>
-			<groupId>com.google.guava</groupId>
-			<artifactId>guava</artifactId>
-			<version>16.0.1</version>
+			<groupId>com.trs.smas.flume</groupId>
+			<artifactId>common</artifactId>
+			<version>1.0</version>
 		</dependency>
 	</dependencies>
 </project>

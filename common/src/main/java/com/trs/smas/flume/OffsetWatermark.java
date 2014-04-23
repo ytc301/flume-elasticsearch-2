@@ -5,37 +5,45 @@
  */
 package com.trs.smas.flume;
 
+import java.io.IOException;
+import java.io.Serializable;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+
+import org.apache.commons.lang.SerializationUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.builder.ToStringBuilder;
 
 /**
- * Offset based watermark
- * @deprecated using {@link Watermark}
+ * 基于偏移量的水位线,适用于cursor值相等时能保证严格升序的情况
  * @since huangshengbo @ Apr 16, 2014 9:45:20 PM
  *
  */
-public class LegacyWatermark {
+public class OffsetWatermark implements Serializable {
 
-    private String identifier;
+	private static final long serialVersionUID = 974415938880460887L;
+	
+	private String applyTo;
     private String cursor;
     private long offset = 0L;
 
-    public LegacyWatermark(String identifier, String cursor){
+    public OffsetWatermark(String identifier, String cursor){
         this(identifier, cursor, 0L);
     }
 
-    public LegacyWatermark(String identifier, String cursor, long offset){
-        this.identifier = identifier;
+    public OffsetWatermark(String applyTo, String cursor, long offset){
+        this.applyTo = applyTo;
         this.cursor = cursor;
         this.offset = offset;
     }
 
-    public String getIdentifier() {
-        return identifier;
+    public String getApplyTo() {
+        return applyTo;
     }
 
-    public void setIdentifier(String identifier) {
-        this.identifier = identifier;
+    public void setApplyTo(String applyTo) {
+        this.applyTo = applyTo;
     }
 
     public String getCursor() {
@@ -63,9 +71,27 @@ public class LegacyWatermark {
         }
     }
 
+	/** 
+	 * 从文件加载watermark
+	 * @param path
+	 * @return 文件不存在时返回null
+	 * @throws IOException
+	 * @since huangshengbo @ Apr 23, 2014 11:02:14 AM
+	*/
+	public static OffsetWatermark loadFrom(Path path) throws IOException{
+		if(!Files.exists(path)){
+			return null;
+		}
+		return (OffsetWatermark)SerializationUtils.deserialize(Files.readAllBytes(path));
+	}
+	
+	public void saveTo(Path path) throws IOException{
+		Files.write(path, SerializationUtils.serialize(this), StandardOpenOption.CREATE);
+	}
+    
     public String toString(){
         return new ToStringBuilder(this)
-                .append("identifier", getIdentifier())
+                .append("applyTo", getApplyTo())
                 .append("cursor", getCursor())
                 .append("offset", getOffset()).toString();
     }

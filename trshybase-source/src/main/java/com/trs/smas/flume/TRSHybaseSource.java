@@ -66,7 +66,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	private int batchSize;
 	
 	private TRSConnection connection;
-	private Watermark watermark;
+	private DiscreteWatermark watermark;
 	
 	private SourceCounter sourceCounter;
 	
@@ -80,6 +80,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 		database = context.getString("database");
 		filter = context.getString("filter");
 		watermarkField = context.getString("watermark");
+		identifierField = context.getString("identifier");
 		from = context.getString("from");
 		checkpoint = FileSystems.getDefault().getPath(context.getString("checkpoint"));
 		fields = context.getString("fields").split(";");
@@ -100,14 +101,14 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	public synchronized void start() {
 		//初始化watermark
 		try {
-			watermark = Watermark.loadFrom(checkpoint);
+			watermark = DiscreteWatermark.loadFrom(checkpoint);
 		} catch (IOException e) {
 			LOG.error("Unable to load watermark from" + checkpoint, e);
 			throw new RuntimeException("watermark loading failed, you can delete "+ checkpoint + " and then restart.", e);
 		}
 		
 		if(watermark == null){
-			watermark = new Watermark(watermarkField, from);
+			watermark = new DiscreteWatermark(watermarkField, from);
 		}
 		connection = new TRSConnection(this.url, this.username, this.password, new ConnectParams());
 		sourceCounter.start();
@@ -158,7 +159,6 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 				if( watermark.isOverflow(mark, id)){
 					continue;
 				}
-				
 				StringBuilder strBuf = new StringBuilder();
 				strBuf.append("<REC>\n");
 				for(String field : fields){

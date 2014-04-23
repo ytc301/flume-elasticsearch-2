@@ -18,7 +18,7 @@ public class WatermarkTest {
 
 	@Test
 	public void test() {
-		Watermark w = new Watermark("", "2014.04.23");
+		DiscreteWatermark w = new DiscreteWatermark("", "2014.04.23");
 		assertTrue( w.isOverflow("2014.04.22", "abc"));
 		assertFalse( w.isOverflow("2014.04.23", "abc"));
 		w.rise("2014.04.23", "abc");

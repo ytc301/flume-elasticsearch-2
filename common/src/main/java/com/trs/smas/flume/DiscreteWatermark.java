@@ -20,12 +20,12 @@ import com.google.common.hash.BloomFilter;
 import com.google.common.hash.Funnels;
 
 /**
- * 水位线,用于导数据时标记以保证不重不漏
+ * 离散水位线,用于导数据时标记以保证不重不漏,适用情况: cursor值相等的记录里,不能保证严格升序(如LILO),如TRS Server检索只能保证值相同时的FILO排序
  * 
  * @since huangshengbo @ Apr 22, 2014 11:00:24 PM
  * 
  */
-public class Watermark implements Serializable {
+public class DiscreteWatermark implements Serializable {
 
 	private static final long serialVersionUID = 2905794392669383111L;
 
@@ -34,11 +34,11 @@ public class Watermark implements Serializable {
 	private BloomFilter<CharSequence> overflowedIds;
 	private long offset = 0L;// 无业务价值,只是用于调试监控
 
-	public Watermark(String applyTo, String cursor) {
+	public DiscreteWatermark(String applyTo, String cursor) {
 		this.applyTo = applyTo;
 		this.cursor = cursor;
 		this.overflowedIds = BloomFilter.create(
-				Funnels.stringFunnel(Charset.forName("UTF-8")), 5000, 0.0003);
+				Funnels.stringFunnel(Charset.forName("UTF-8")), 5000, 0.0002);
 	}
 
 	public String getApplyTo() {
@@ -77,11 +77,11 @@ public class Watermark implements Serializable {
 	 * @throws IOException
 	 * @since huangshengbo @ Apr 23, 2014 11:02:14 AM
 	*/
-	public static Watermark loadFrom(Path path) throws IOException{
+	public static DiscreteWatermark loadFrom(Path path) throws IOException{
 		if(!Files.exists(path)){
 			return null;
 		}
-		return (Watermark)SerializationUtils.deserialize(Files.readAllBytes(path));
+		return (DiscreteWatermark)SerializationUtils.deserialize(Files.readAllBytes(path));
 	}
 	
 	public void saveTo(Path path) throws IOException{
