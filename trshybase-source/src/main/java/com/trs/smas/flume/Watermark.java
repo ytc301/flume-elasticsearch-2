@@ -50,7 +50,7 @@ public class Watermark implements Serializable{
 			this.cursor = mark;
 			this.overflowedIds = BloomFilter.create(
 					Funnels.stringFunnel(Charset.forName("UTF-8")), 5000,
-					0.0003);
+					0.0002);
 			this.overflowedIds.put(id);
 			this.offset = 1;
 		} else {

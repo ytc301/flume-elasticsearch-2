@@ -5,14 +5,17 @@
  */
 package com.trs.smas.flume;
 
+import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.lang.SerializationUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
@@ -100,13 +103,12 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 	public synchronized void start() {
 		//初始化watermark
 		if(Files.exists(checkpoint)){
-//TODO			List<String> options = null;
-//			try {
-//				options = Files.readAllLines(checkpoint, StandardCharsets.UTF_8);
-//			} catch (IOException e) {
-//				LOG.error("watemark file init error.", e);
-//			}
-//			watermark = new Watermark(watermarkField, options.get(0));
+			try {
+				watermark = (Watermark)SerializationUtils.deserialize(Files.readAllBytes(checkpoint));
+			} catch (IOException e) {
+				LOG.error("Unable to load watermark from" + checkpoint, e);
+				throw new RuntimeException("watermark loading failed, you can delete "+ checkpoint + " and then restart.", e);
+			}
 		}else {
 			watermark = new Watermark(watermarkField, from);
 		}
@@ -122,12 +124,12 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource, C
 		} catch (TRSException e) {
 			LOG.warn("closing hybase connection failed.", e);
 		}
-//TODO		//保存watermark
-//		try {
-//			Files.write(checkpoint, (watermark.getCursor() + "\n" + watermark.getOffset()).getBytes(), StandardOpenOption.CREATE);
-//		} catch (IOException e) {
-//			LOG.error("watermark file create file.", e);
-//		}
+		//保存watermark
+		try {
+			Files.write(checkpoint, SerializationUtils.serialize(watermark), StandardOpenOption.CREATE);
+		} catch (IOException e) {
+			LOG.error("Unable to save watermark "+ watermark +" to " + checkpoint, e);
+		}
 		super.stop();
 		sourceCounter.stop();
 	}
