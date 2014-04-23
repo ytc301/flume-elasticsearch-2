@@ -41,6 +41,7 @@ import com.trs.client.TRSException;
  * .username = system<br/>
  * .password = manager2013admin<br/>
  * .database = spark_test<br/>
+ * .format = <REC>\n<IR_CONTENT>={body}\n
  * </code>
  * 
  * @since huangshengbo @ Apr 17, 2014 12:53:59 AM
@@ -56,6 +57,7 @@ public class BasicTRSServerSink extends AbstractSink implements Configurable {
 	private String username;
 	private String password;
 	private String database;
+	private String format;
 
 	private TRSConnection connection;
 
@@ -110,7 +112,8 @@ public class BasicTRSServerSink extends AbstractSink implements Configurable {
 				if (event == null) {
 					break;
 				}
-				Files.write(batch, event.getBody(), StandardOpenOption.APPEND);
+				
+				TRSFileBuilder.append(batch, event, format);
 			}
 
 			if (i == 0) {
@@ -193,6 +196,7 @@ public class BasicTRSServerSink extends AbstractSink implements Configurable {
 		username = context.getString("username", "system");
 		password = context.getString("password", "manager");
 		database = context.getString("database");
+		format = context.getString("format",TRSFileBuilder.BODY_PLACEHOLDER);
 		batchSize = context.getInteger("batchSize", 1000);
 
 		bufferDir = FileSystems.getDefault().getPath(

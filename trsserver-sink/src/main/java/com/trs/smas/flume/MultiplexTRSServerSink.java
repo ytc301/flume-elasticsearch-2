@@ -50,6 +50,7 @@ public class MultiplexTRSServerSink extends AbstractSink implements
 	private String username;
 	private String password;
 	private String database;
+	private String format;
 	private List<String> databaseArgs;
 	private int batchSize;
 	private SinkCounter sinkCounter;
@@ -112,7 +113,7 @@ public class MultiplexTRSServerSink extends AbstractSink implements
 					break;
 				}
 				
-				Files.write(select(event, buffers), event.getBody(), StandardOpenOption.APPEND);
+				TRSFileBuilder.append( select(event, buffers), event , format);
 			}
 
 			if (i == 0) {
@@ -187,6 +188,7 @@ public class MultiplexTRSServerSink extends AbstractSink implements
 		port = context.getString("port", "8888");
 		username = context.getString("username", "system");
 		password = context.getString("password", "manager");
+		format = context.getString("format",TRSFileBuilder.BODY_PLACEHOLDER);
 		
 		database = context.getString("database");
 		databaseArgs = new ArrayList<String>(10);
