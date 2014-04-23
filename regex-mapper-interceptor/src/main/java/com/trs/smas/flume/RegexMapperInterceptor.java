@@ -19,7 +19,8 @@ import org.apache.flume.interceptor.Interceptor;
  * 配置示例:
  * <code>
  * .type = com.trs.smas.flume.RegexMapperInterceptor$Builder<br/>
- * .header = IR_GROUPNAME<br/>
+ * .from = IR_GROUPNAME<br/>
+ * .to = .group <br/>
  * .mapping.news = ^国内新闻<br/>
  * .mapping.forum = ^国内论坛<br/>
  * .default = other<br/>
@@ -30,14 +31,16 @@ import org.apache.flume.interceptor.Interceptor;
  */
 public class RegexMapperInterceptor implements Interceptor {
 
-	private String headerName;
+	private String from;
+	private String to;
 	private String defaultValue;
 	private Map<String, String> mapping;
 	private Map<Pattern, String> patternMapping;
 
-	public RegexMapperInterceptor(String headerName,
+	public RegexMapperInterceptor(String from, String to,
 			Map<String, String> mapping, String defaultValue) {
-		this.headerName = headerName;
+		this.from = from;
+		this.to = to;
 		this.defaultValue = defaultValue;
 		this.mapping = mapping;
 	}
@@ -63,15 +66,15 @@ public class RegexMapperInterceptor implements Interceptor {
 	 */
 	public Event intercept(Event event) {
 		Map<String, String> headers = event.getHeaders();
-		String value = StringUtils.defaultString(headers.get(headerName));
+		String value = StringUtils.defaultString(headers.get(from));
 		for (Pattern pattern : patternMapping.keySet()) {
 			if (pattern.matcher(value).find()) {
-				headers.put(headerName, patternMapping.get(pattern));
+				headers.put(to, patternMapping.get(pattern));
 				return event;
 			}
 		}
 		if (!StringUtils.isEmpty(defaultValue)) {
-			headers.put(headerName, defaultValue);
+			headers.put(to, defaultValue);
 		}
 		return event;
 	}
@@ -98,7 +101,8 @@ public class RegexMapperInterceptor implements Interceptor {
 
 	public static class Builder implements Interceptor.Builder {
 
-		private String headerName;
+		private String from;
+		private String to;
 		private String defaultValue;
 		private Map<String, String> mapping;
 
@@ -110,7 +114,8 @@ public class RegexMapperInterceptor implements Interceptor {
 		 * )
 		 */
 		public void configure(Context context) {
-			headerName = context.getString("header");
+			from = context.getString("from");
+			to = context.getString("to", from);
 			defaultValue = context.getString("default");
 			mapping = context.getSubProperties("mapping.");
 		}
@@ -121,7 +126,7 @@ public class RegexMapperInterceptor implements Interceptor {
 		 * @see org.apache.flume.interceptor.Interceptor.Builder#build()
 		 */
 		public Interceptor build() {
-			return new RegexMapperInterceptor(headerName, mapping, defaultValue);
+			return new RegexMapperInterceptor(from, to, mapping, defaultValue);
 		}
 	}
 

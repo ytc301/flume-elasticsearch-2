@@ -36,7 +36,7 @@ import com.trs.client.TRSConnection;
 import com.trs.client.TRSException;
 
 /**
- * .database = {IR_GROUPNAME}_{IR_URLDATE}
+ * .database = {.group}_{.month}
  * @since huangshengbo @ Apr 21, 2014 5:43:24 PM
  *
  */
