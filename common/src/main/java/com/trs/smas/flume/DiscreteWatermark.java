@@ -38,7 +38,7 @@ public class DiscreteWatermark implements Serializable {
 		this.applyTo = applyTo;
 		this.cursor = cursor;
 		this.overflowedIds = BloomFilter.create(
-				Funnels.stringFunnel(Charset.forName("UTF-8")), 5000, 0.0002);
+				Funnels.stringFunnel(Charset.forName("UTF-8")), 10000, 0.0000001);
 	}
 
 	public String getApplyTo() {
@@ -53,8 +53,8 @@ public class DiscreteWatermark implements Serializable {
 		if (StringUtils.isEmpty(this.cursor) || this.cursor.compareTo(mark) < 0) {
 			this.cursor = mark;
 			this.overflowedIds = BloomFilter.create(
-					Funnels.stringFunnel(Charset.forName("UTF-8")), 5000,
-					0.0002);
+					Funnels.stringFunnel(Charset.forName("UTF-8")), 10000,
+					0.0000001);
 			this.overflowedIds.put(id);
 			this.offset = 1;
 		} else {
