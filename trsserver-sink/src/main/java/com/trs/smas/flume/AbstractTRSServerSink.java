@@ -170,7 +170,7 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 		username = context.getString("username", "system");
 		password = context.getString("password", "manager");
 		database = context.getString("database");
-		format = context.getString("format",TRSFileBuilder.BODY_PLACEHOLDER);
+		format = context.getString("format",TRSFileBuilder.BODY_PLACEHOLDER) + "\n";
 		batchSize = context.getInteger("batchSize", 1000);
 
 		bufferDir = FileSystems.getDefault().getPath(
