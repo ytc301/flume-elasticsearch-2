@@ -137,7 +137,9 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 				sinkCounter.incrementBatchCompleteCount();
 			}
 			
-			load();
+			if(i > 0){
+				load();
+			}
 			transaction.commit();
 		} catch (ChannelException e) {
 			transaction.rollback();
