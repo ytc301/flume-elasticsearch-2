@@ -60,7 +60,7 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 		try {
 			connection = new TRSConnection();
 			connection.connect(host, port, username, password);
-			TRSConnection.setCharset(TRSConstant.TCE_CHARSET_UTF8, false);
+			
 			connection.setBufferPath(backupDir.toString());
 		} catch (TRSException e) {
 			throw new RuntimeException(

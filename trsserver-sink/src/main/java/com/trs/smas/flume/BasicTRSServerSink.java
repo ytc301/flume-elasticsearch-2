@@ -15,6 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.trs.client.RecordReport;
+import com.trs.client.TRSConnection;
+import com.trs.client.TRSConstant;
 import com.trs.client.TRSException;
 
 /**
@@ -56,6 +58,7 @@ public class BasicTRSServerSink extends AbstractTRSServerSink {
 	@Override
 	public void load() throws IOException {
 		try {
+			TRSConnection.setCharset(TRSConstant.TCE_CHARSET_UTF8, false);
 			RecordReport report = connection.loadRecords(database,
 					username, buffer.toString(), null, false);
 
