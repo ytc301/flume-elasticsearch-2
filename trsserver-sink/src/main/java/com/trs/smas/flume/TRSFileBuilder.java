@@ -39,7 +39,7 @@ public class TRSFileBuilder {
 	}
 	
 	public static void append(Path path, Event e, String format, boolean withEventHeaders) throws IOException{
-		StringBuilder sb = new StringBuilder(format.replace(BODY_PLACEHOLDER, new String(e.getBody(), "UTF-8")));
+		StringBuilder sb = new StringBuilder(format.replace(BODY_PLACEHOLDER, new String(e.getBody())));
 		
 		Map<String,String> headers = e.getHeaders();
 		for(String key : headers.keySet()){
@@ -49,6 +49,6 @@ public class TRSFileBuilder {
 			sb.append("<").append(key).append(">=").append(headers.get(key)).append("\n");
 		}
 		
-		Files.write(path, sb.toString().getBytes("UTF-8"), StandardOpenOption.APPEND);
+		Files.write(path, sb.toString().getBytes(), StandardOpenOption.APPEND);
 	}
 }
