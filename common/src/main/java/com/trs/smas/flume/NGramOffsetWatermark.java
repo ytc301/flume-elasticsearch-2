@@ -30,10 +30,12 @@ public class NGramOffsetWatermark implements Serializable {
 
 	private String applyTo;
 	private Multiset<String> cursors;
+	private String initialCursor;
 	private int n;
 
 	public NGramOffsetWatermark(String applyTo, String cursor, int n) {
 		this.applyTo = applyTo;
+		this.initialCursor = cursor;
 		this.n = n;
 		cursors = HashMultiset.create(n);
 	}
@@ -47,6 +49,9 @@ public class NGramOffsetWatermark implements Serializable {
 	}
 
 	public String getCursor() {
+		if(cursors.size() == 0){
+			return this.initialCursor;
+		}
 		return Collections.min(cursors.elementSet());
 	}
 

@@ -25,5 +25,29 @@ public class WatermarkTest {
 		assertTrue( w.isOverflow("2014.04.23", "abc"));
 		assertFalse( w.isOverflow("2014.04.23", "abd"));
 	}
+	
+	@Test
+	public void testNGram() {
+		NGramOffsetWatermark w = new NGramOffsetWatermark("", "2014.04.23",3);
+		w.rise("2014.04.23");
+		assertEquals(1,w.getOffset());
+		assertEquals("2014.04.23",w.getCursor());
+		
+		w.rise("2014.04.23");
+		assertEquals(2,w.getOffset());
+		assertEquals("2014.04.23",w.getCursor());
+		
+		w.rise("2014.04.24");
+		assertEquals(3,w.getOffset());
+		assertEquals("2014.04.23",w.getCursor());
+		
+		w.rise("2014.04.25");
+		assertEquals(4,w.getOffset());
+		assertEquals("2014.04.23",w.getCursor());
+		
+		w.rise("2014.04.26");
+		assertEquals(3,w.getOffset());
+		assertEquals("2014.04.24",w.getCursor());
+	}
 
 }
