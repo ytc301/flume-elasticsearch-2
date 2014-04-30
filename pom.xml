@@ -17,6 +17,7 @@
 		<module>regex-mapper-interceptor</module>
 	        <module>trsserver-source</module>
 		<module>nlp-interceptor</module>
+	        <module>trsserver-weibo-userinfo-source</module>
   	</modules>
 
 	<properties>
