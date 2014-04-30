@@ -14,6 +14,7 @@
 		<module>common</module>
 		<module>trshybase-source</module>
 		<module>trsserver-sink</module>
+		<module>feed-sink</module>
 		<module>regex-mapper-interceptor</module>
 	        <module>trsserver-source</module>
 		<module>nlp-interceptor</module>
