@@ -8,7 +8,9 @@ package com.trs.smas.flume;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
+import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +18,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.time.DateUtils;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.EventDeliveryException;
@@ -45,7 +48,8 @@ import com.trs.hybase.client.params.SearchParams;
  * .batchSize = 1000<br/>
  * .body = <REC>\n<IR_URLTITLE>={IR_URLTITLE}\n<IR_URLNAME>={IR_URLNAME}\n<IR_CONTENT>={IR_CONTENT}\n<br/>
  * .headers = IR_GROUPNAME;IR_URLDATE<br/>
- * .from = 2014/04/25 13:30:00
+ * .from = 2014/04/25 13:30:00<br/>
+ * .ngram = 10<br/>
  * .delay = -10
  * </code>
  * 
@@ -68,6 +72,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 	private String[] headers;
 	private String watermarkField;
 	private int ngram;
+	private int delay;
 	private String from;
 	private Path checkpoint;
 
@@ -92,6 +97,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 		filter = context.getString("filter");
 		watermarkField = context.getString("watermark");
 		ngram = context.getInteger("ngram");
+		delay = context.getInteger("delay", -10);
 		from = context.getString("from");
 		checkpoint = FileSystems.getDefault().getPath(
 				context.getString("checkpoint"));
@@ -164,66 +170,81 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 	 * @see org.apache.flume.PollableSource#process()
 	 */
 	public Status process() throws EventDeliveryException {
+		Date cursor = null;
+		try {
+			cursor = DateUtils.parseDate(watermark.getCursor(),
+					new String[] { "yyyy/MM/dd HH:mm:ss" });
+		} catch (ParseException e) {
+			LOG.error("parse watermark cursor error! ", e);
+		}
+
 		Status status = Status.READY;
 
-		List<Event> buffer = new ArrayList<Event>(batchSize);
-		String query = StringUtils.isEmpty(watermark.getCursor()) ? filter
-				: watermark.getApplyTo() + ": [\"" + watermark.getCursor()
-						+ "\" TO *}"
-						+ (StringUtils.isEmpty(filter) ? "" : " AND " + filter);
+		if (cursor != null
+				&& cursor.before(DateUtils.addMinutes(new Date(), delay))) {
 
-		TRSResultSet resultSet = null;
-		try {
-			resultSet = connection.executeSelect(
-					this.database,
-					query,
-					watermark.getOffset(),
-					batchSize,
-					new SearchParams().setSortMethod("+"
-							+ watermark.getApplyTo()));
-		} catch (TRSException e) {
-			LOG.error("fail to select " + database + " by " + query, e);
-			return Status.BACKOFF;
-		}
-		if (resultSet.size() == 0) {
-			resultSet.close();
-			return Status.BACKOFF;
-		}
-		for (int i = 0; i < Math.min(batchSize, resultSet.size()); i++) {
-			resultSet.moveNext();
+			List<Event> buffer = new ArrayList<Event>(batchSize);
+			String query = StringUtils.isEmpty(watermark.getCursor()) ? filter
+					: watermark.getApplyTo()
+							+ ": [\""
+							+ watermark.getCursor()
+							+ "\" TO *}"
+							+ (StringUtils.isEmpty(filter) ? "" : " AND "
+									+ filter);
+
+			TRSResultSet resultSet = null;
 			try {
-				TRSRecord record = resultSet.get();
-
-				List<String> values = new ArrayList<String>(
-						this.bodyArgs.size());
-
-				for (String field : this.bodyArgs) {
-					String value = record.getString(field);
-					values.add(StringUtils.defaultString(StringUtils
-							.startsWith(value, "@") ? "//" + value : value));
-				}
-				Map<String, String> header = new HashMap<String, String>(
-						this.headers.length);
-				for (String key : this.headers) {
-					header.put(key, record.getString(key));
-				}
-				buffer.add(EventBuilder.withBody(
-						String.format(body, values.toArray()).getBytes(),
-						header));
-				watermark.rise(record.getString(watermark.getApplyTo()));
+				resultSet = connection.executeSelect(
+						this.database,
+						query,
+						watermark.getOffset(),
+						batchSize,
+						new SearchParams().setSortMethod("+"
+								+ watermark.getApplyTo()));
 			} catch (TRSException e) {
-				LOG.error("can not read data from resultset " + watermark, e);
-				break;
+				LOG.error("fail to select " + database + " by " + query, e);
+				return Status.BACKOFF;
 			}
+			if (resultSet.size() == 0) {
+				resultSet.close();
+				return Status.BACKOFF;
+			}
+			for (int i = 0; i < Math.min(batchSize, resultSet.size()); i++) {
+				resultSet.moveNext();
+				try {
+					TRSRecord record = resultSet.get();
+
+					List<String> values = new ArrayList<String>(
+							this.bodyArgs.size());
+
+					for (String field : this.bodyArgs) {
+						String value = record.getString(field);
+						values.add(StringUtils.defaultString(StringUtils
+								.startsWith(value, "@") ? "//" + value : value));
+					}
+					Map<String, String> header = new HashMap<String, String>(
+							this.headers.length);
+					for (String key : this.headers) {
+						header.put(key, record.getString(key));
+					}
+					buffer.add(EventBuilder.withBody(
+							String.format(body, values.toArray()).getBytes(),
+							header));
+					watermark.rise(record.getString(watermark.getApplyTo()));
+				} catch (TRSException e) {
+					LOG.error("can not read data from resultset " + watermark,
+							e);
+					break;
+				}
+			}
+
+			LOG.debug("{} record(s) ingested. current watermark:{}",
+					resultSet.size(), watermark);
+			getChannelProcessor().processEventBatch(buffer);
+			sourceCounter.incrementAppendBatchAcceptedCount();
+			sourceCounter.addToEventAcceptedCount(buffer.size());
+			resultSet.close();
 		}
-
-		LOG.debug("{} record(s) ingested. current watermark:{}",
-				resultSet.size(), watermark);
-		getChannelProcessor().processEventBatch(buffer);
-		sourceCounter.incrementAppendBatchAcceptedCount();
-		sourceCounter.addToEventAcceptedCount(buffer.size());
-		resultSet.close();
-
 		return status;
 	}
 
