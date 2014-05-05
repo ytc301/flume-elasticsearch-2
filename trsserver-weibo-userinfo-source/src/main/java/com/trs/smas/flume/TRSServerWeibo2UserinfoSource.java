@@ -3,12 +3,15 @@ package com.trs.smas.flume;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
+import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.time.DateUtils;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.EventDeliveryException;
@@ -42,11 +45,13 @@ public class TRSServerWeibo2UserinfoSource extends AbstractSource implements
 	private String watermarkField;
 	private String from;
 	private Path checkpoint;
+	private int ngram;
+	private int delay;
 
 	private int batchSize;
 
 	private TRSConnection connection;
-	private OffsetWatermark watermark;
+	private NGramOffsetWatermark watermark;
 
 	private SourceCounter sourceCounter;
 
@@ -63,6 +68,8 @@ public class TRSServerWeibo2UserinfoSource extends AbstractSource implements
 		from = context.getString("from");
 		checkpoint = FileSystems.getDefault().getPath(
 				context.getString("checkpoint"));
+		ngram = context.getInteger("ngram");
+		delay = context.getInteger("delay", -10);
 		body = context.getString("body");
 		bodyArgs = new ArrayList<String>();
 		Pattern pattern = Pattern.compile("\\{(.*?)\\}");
@@ -86,7 +93,7 @@ public class TRSServerWeibo2UserinfoSource extends AbstractSource implements
 	public synchronized void start() {
 		// 初始化watermark
 		try {
-			watermark = OffsetWatermark.loadFrom(checkpoint);
+			watermark = NGramOffsetWatermark.loadFrom(checkpoint);
 		} catch (IOException e) {
 			LOG.error("Unable to load watermark from" + checkpoint, e);
 			throw new RuntimeException(
@@ -95,7 +102,7 @@ public class TRSServerWeibo2UserinfoSource extends AbstractSource implements
 		}
 
 		if (watermark == null) {
-			watermark = new OffsetWatermark(watermarkField, from);
+			watermark = new NGramOffsetWatermark(watermarkField, from, ngram);
 		}
 
 		try {
@@ -125,87 +132,106 @@ public class TRSServerWeibo2UserinfoSource extends AbstractSource implements
 
 	@Override
 	public Status process() throws EventDeliveryException {
+		Date cursor = null;
+		try {
+			cursor = DateUtils.parseDate(watermark.getCursor(),
+					new String[] { "yyyy.MM.dd HH:mm:ss" });
+		} catch (ParseException e) {
+			LOG.error("parse watermark cursor error! ", e);
+		}
+
 		Status status = Status.READY;
-		List<Event> buffer = new ArrayList<Event>(batchSize);
-		String query = StringUtils.isEmpty(watermark.getCursor()) ? weiboFilter
-				: watermark.getApplyTo()
-						+ " >= "
-						+ watermark.getCursor()
-						+ (StringUtils.isEmpty(weiboFilter) ? "" : " * "
-								+ weiboFilter);
-		TRSResultSet resultSet = null;
-		try {
-			resultSet = connection.executeSelect(this.weiboDB, query, "+"
-					+ watermark.getApplyTo(), false);
-		} catch (TRSException e) {
-			LOG.error("fail to select " + this.weiboDB + " by " + query, e);
-			return Status.BACKOFF;
-		}
-		if (resultSet.getRecordCount() == 0) {
+
+		if (cursor != null
+				&& cursor.before(DateUtils.addMinutes(new Date(), delay))) {
+
+			List<Event> buffer = new ArrayList<Event>(batchSize);
+			String query = StringUtils.isEmpty(watermark.getCursor()) ? weiboFilter
+					: watermark.getApplyTo()
+							+ " >= "
+							+ watermark.getCursor()
+							+ (StringUtils.isEmpty(weiboFilter) ? "" : " * "
+									+ weiboFilter);
+			TRSResultSet resultSet = null;
+			try {
+				resultSet = connection.executeSelect(this.weiboDB, query, "+"
+						+ watermark.getApplyTo(), false);
+			} catch (TRSException e) {
+				LOG.error("fail to select " + this.weiboDB + " by " + query, e);
+				return Status.BACKOFF;
+			}
+			if (resultSet.getRecordCount() == 0) {
+				resultSet.close();
+				return Status.BACKOFF;
+			}
+
+			StringBuffer userQuery = new StringBuffer();
+			userQuery.append("IR_UID=(");
+			for (long i = watermark.getOffset(); i < Math.min(batchSize,
+					resultSet.getRecordCount()); i++) {
+				try {
+					resultSet.moveTo(0, i);
+					userQuery.append(resultSet.getString("IR_UID"));
+					if (i < Math.min(batchSize, resultSet.getRecordCount()) - 1) {
+						userQuery.append(", ");
+					}
+					watermark.rise(resultSet.getString(watermark.getApplyTo()));
+				} catch (TRSException e) {
+					LOG.error("can not read data from resultset " + watermark,
+							e);
+					break;
+				}
+
+			}
+			userQuery.append(")");
+
+			TRSResultSet userinfo = null;
+			try {
+				userinfo = connection.executeSelect(this.userDB,
+						userQuery.toString(), false);
+			} catch (TRSException e) {
+				LOG.error(
+						"fail to select " + this.userDB + " by "
+								+ userQuery.toString(), e);
+				return Status.BACKOFF;
+			}
+			if (userinfo.getRecordCount() == 0) {
+				userinfo.close();
+				return Status.BACKOFF;
+			}
+
+			for (int i = 0; i < userinfo.getRecordCount(); i++) {
+				try {
+					userinfo.moveTo(0, i);
+
+					List<String> values = new ArrayList<String>(
+							this.bodyArgs.size());
+
+					for (String field : this.bodyArgs) {
+						String value = userinfo.getString(field);
+						values.add(StringUtils.defaultString(StringUtils
+								.startsWith(value, "@") ? "//" + value : value));
+					}
+
+					buffer.add(EventBuilder.withBody(String.format(body,
+							values.toArray()).getBytes()));
+
+				} catch (TRSException e) {
+					LOG.error("can not read data from resultset " + watermark,
+							e);
+					break;
+				}
+			}
+
+			LOG.debug("{} record(s) ingested. current watermark:{}",
+					userinfo.getRecordCount(), watermark);
+			getChannelProcessor().processEventBatch(buffer);
+			sourceCounter.incrementAppendBatchAcceptedCount();
+			sourceCounter.addToEventAcceptedCount(buffer.size());
 			resultSet.close();
-			return Status.BACKOFF;
-		}
-
-		StringBuffer userQuery = new StringBuffer();
-		userQuery.append("IR_UID=(");
-		for (int i = 0; i < Math.min(batchSize, resultSet.getRecordCount()); i++) {
-			try {
-				resultSet.moveTo(0, i);
-				userQuery.append(resultSet.getString("IR_UID"));
-				if (i < Math.min(batchSize, resultSet.getRecordCount()) - 1) {
-					userQuery.append(", ");
-				}
-			} catch (TRSException e) {
-				LOG.error("can not read data from resultset " + watermark, e);
-			}
-
-		}
-		userQuery.append(")");
-
-		TRSResultSet userinfo = null;
-		try {
-			userinfo = connection.executeSelect(this.userDB,
-					userQuery.toString(), false);
-		} catch (TRSException e) {
-			LOG.error(
-					"fail to select " + this.userDB + " by "
-							+ userQuery.toString(), e);
-			return Status.BACKOFF;
-		}
-		if (userinfo.getRecordCount() == 0) {
 			userinfo.close();
-			return Status.BACKOFF;
 		}
 
-		for (int i = 0; i < userinfo.getRecordCount(); i++) {
-			try {
-				userinfo.moveTo(0, i);
-
-				List<String> values = new ArrayList<String>(
-						this.bodyArgs.size());
-
-				for (String field : this.bodyArgs) {
-					String value = userinfo.getString(field);
-					values.add(StringUtils.defaultString(StringUtils
-							.startsWith(value, "@") ? "//" + value : value));
-				}
-
-				
-				buffer.add(EventBuilder.withBody(
-						String.format(body, values.toArray()).getBytes()));
-				watermark.rise(userinfo.getString(watermark.getApplyTo()));
-			} catch (TRSException e) {
-				LOG.error("can not read data from resultset " + watermark, e);
-				break;
-			}
-		}
-
-		LOG.debug("{} record(s) ingested. current watermark:{}",
-				resultSet.getRecordCount(), watermark);
-		getChannelProcessor().processEventBatch(buffer);
-		sourceCounter.incrementAppendBatchAcceptedCount();
-		sourceCounter.addToEventAcceptedCount(buffer.size());
-		resultSet.close();
 		return status;
 	}
 
