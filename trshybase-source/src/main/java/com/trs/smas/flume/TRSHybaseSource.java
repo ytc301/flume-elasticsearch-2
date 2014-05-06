@@ -50,7 +50,8 @@ import com.trs.hybase.client.params.SearchParams;
  * .headers = IR_GROUPNAME;IR_URLDATE<br/>
  * .from = 2014/04/25 13:30:00<br/>
  * .ngram = 10<br/>
- * .delay = -10
+ * .delay = -10<br/>
+ * .range = 30
  * </code>
  * 
  * @since huangshengbo @ Apr 16, 2014 6:04:13 PM
@@ -73,6 +74,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 	private String watermarkField;
 	private int ngram;
 	private int delay;
+	private int range;
 	private String from;
 	private Path checkpoint;
 
@@ -96,8 +98,9 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 		database = context.getString("database");
 		filter = context.getString("filter");
 		watermarkField = context.getString("watermark");
-		ngram = context.getInteger("ngram");
+		ngram = context.getInteger("ngram", 10);
 		delay = context.getInteger("delay", -10);
+		range = context.getInteger("range", 30);
 		from = context.getString("from");
 		checkpoint = FileSystems.getDefault().getPath(
 				context.getString("checkpoint"));
@@ -193,14 +196,14 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 									+ filter);
 
 			TRSResultSet resultSet = null;
+			SearchParams params = new SearchParams();
+			params.setSortMethod("+" + watermark.getApplyTo());
+			params.setProperty("search.range.filter",
+					"IR_URLDATE:[" + DateUtils.addDays(cursor, -range) + " TO "
+							+ DateUtils.addDays(cursor, range) + "]");
 			try {
-				resultSet = connection.executeSelect(
-						this.database,
-						query,
-						watermark.getOffset(),
-						batchSize,
-						new SearchParams().setSortMethod("+"
-								+ watermark.getApplyTo()));
+				resultSet = connection.executeSelect(this.database, query,
+						watermark.getOffset(), batchSize, params);
 			} catch (TRSException e) {
 				LOG.error("fail to select " + database + " by " + query, e);
 				return Status.BACKOFF;
@@ -247,5 +250,4 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 		}
 		return status;
 	}
-
 }
