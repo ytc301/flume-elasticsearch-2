@@ -6,8 +6,11 @@
 package com.trs.smas.flume;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Date;
@@ -33,8 +36,8 @@ import org.slf4j.LoggerFactory;
 import com.trs.dev4.jdk16.utils.DateUtil;
 import com.trs.hybase.client.TRSConnection;
 import com.trs.hybase.client.TRSException;
+import com.trs.hybase.client.TRSExport;
 import com.trs.hybase.client.TRSRecord;
-import com.trs.hybase.client.TRSResultSet;
 import com.trs.hybase.client.params.ConnectParams;
 import com.trs.hybase.client.params.SearchParams;
 
@@ -64,6 +67,9 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 	private static final Logger LOG = LoggerFactory
 			.getLogger(TRSHybaseSource.class);
 
+	private static final String FMT_HYBASE_yMdHm = "yyyy/MM/dd HH:mm:ss";
+	private static final String FMT_HYBASE_yMd = "yyyy/MM/dd";
+
 	private String url;
 	private String username;
 	private String password;
@@ -72,17 +78,19 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 	private String body;
 	private List<String> bodyArgs;
 	private String[] headers;
-	private String watermarkField;
-	private int ngram;
+	private String watermark;
 	private int delay;
 	private int range;
-	private String from;
+	private String partition;
+	private Date from;
+	private int step;
 	private Path checkpoint;
+	private Path exportTmp;
 
 	private int batchSize;
+	private List<Event> buffer;
 
 	private TRSConnection connection;
-	private NGramOffsetWatermark watermark;
 
 	private SourceCounter sourceCounter;
 
@@ -98,13 +106,21 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 		password = context.getString("password");
 		database = context.getString("database");
 		filter = context.getString("filter");
-		watermarkField = context.getString("watermark");
-		ngram = context.getInteger("ngram", 10);
+		watermark = context.getString("watermark");
 		delay = context.getInteger("delay", -10);
 		range = context.getInteger("range", 30);
-		from = context.getString("from");
+		partition = context.getString("partition");
+		try {
+			from = DateUtils.parseDate(context.getString("from"),
+					new String[] { FMT_HYBASE_yMdHm });
+		} catch (ParseException e) {
+			LOG.error("parse from date error! ", e);
+		}
+		step = context.getInteger("step", 30);
 		checkpoint = FileSystems.getDefault().getPath(
 				context.getString("checkpoint"));
+		exportTmp = FileSystems.getDefault().getPath(
+				context.getString("exportTmp"));
 		body = context.getString("body");
 		bodyArgs = new ArrayList<String>();
 		Pattern pattern = Pattern.compile("\\{(.*?)\\}");
@@ -131,21 +147,21 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 
 	@Override
 	public synchronized void start() {
-		// 初始化watermark
-		try {
-			watermark = NGramOffsetWatermark.loadFrom(checkpoint);
-		} catch (IOException e) {
-			LOG.error("Unable to load watermark from" + checkpoint, e);
-			throw new RuntimeException(
-					"watermark loading failed, you can delete " + checkpoint
-							+ " and then restart.", e);
-		}
-
-		if (watermark == null) {
-			watermark = new NGramOffsetWatermark(watermarkField, from, ngram);
-		}
 		connection = new TRSConnection(this.url, this.username, this.password,
 				new ConnectParams());
+
+		if (Files.exists(checkpoint)) {
+			try {
+				from = DateUtils.parseDate(
+						Files.readAllLines(checkpoint, StandardCharsets.UTF_8)
+								.get(0), new String[] { FMT_HYBASE_yMdHm });
+			} catch (ParseException e) {
+				LOG.error("parse from failed! ", e);
+			} catch (IOException e) {
+				LOG.error("read checkpoint file failed! ", e);
+			}
+		}
+
 		sourceCounter.start();
 		super.start();
 	}
@@ -157,13 +173,15 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 		} catch (TRSException e) {
 			LOG.warn("closing hybase connection failed.", e);
 		}
-		// 保存watermark
+
 		try {
-			watermark.saveTo(checkpoint);
+			Files.write(checkpoint, DateUtil
+					.date2String(from, FMT_HYBASE_yMdHm).getBytes(),
+					StandardOpenOption.CREATE);
 		} catch (IOException e) {
-			LOG.error("Unable to save watermark " + watermark + " to "
-					+ checkpoint, e);
+			LOG.error("checkpoint save failed! ", e);
 		}
+
 		super.stop();
 		sourceCounter.stop();
 	}
@@ -174,87 +192,97 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 	 * @see org.apache.flume.PollableSource#process()
 	 */
 	public Status process() throws EventDeliveryException {
-		Date cursor = null;
-		try {
-			cursor = DateUtils.parseDate(watermark.getCursor(),
-					new String[] { "yyyy/MM/dd HH:mm:ss" });
-		} catch (ParseException e) {
-			LOG.error("parse watermark cursor error! ", e);
-		}
-
 		Status status = Status.READY;
 
-		if (cursor != null
-				&& cursor.before(DateUtils.addMinutes(new Date(), delay))) {
+		if (from != null
+				&& from.before(DateUtils.addMinutes(new Date(), delay))) {
 
-			List<Event> buffer = new ArrayList<Event>(batchSize);
-			String query = StringUtils.isEmpty(watermark.getCursor()) ? filter
-					: watermark.getApplyTo()
-							+ ": [\""
-							+ watermark.getCursor()
-							+ "\" TO *}"
-							+ (StringUtils.isEmpty(filter) ? "" : " AND "
-									+ filter);
+			buffer = new ArrayList<Event>(batchSize);
 
-			TRSResultSet resultSet = null;
+			String query = "("
+					+ watermark
+					+ ":[\""
+					+ DateUtil.date2String(from, FMT_HYBASE_yMdHm)
+					+ "\" TO \""
+					+ DateUtil.date2String(DateUtils.addSeconds(from, step),
+							FMT_HYBASE_yMdHm)
+					+ "\"})"
+					+ (StringUtils.isEmpty(filter) ? "" : " AND (" + filter
+							+ ")");
+
 			SearchParams params = new SearchParams();
-			params.setSortMethod("+" + watermark.getApplyTo());
 			params.setProperty(
 					"search.range.filter",
-					"IR_URLDATE:["
+					partition
+							+ ":["
 							+ DateUtil.date2String(
-									DateUtils.addDays(cursor, -range),
-									"yyyy/MM/dd")
+									DateUtils.addDays(from, -range),
+									FMT_HYBASE_yMd)
 							+ " TO "
 							+ DateUtil.date2String(
-									DateUtils.addDays(cursor, range),
-									"yyyy/MM/dd") + "]");
+									DateUtils.addDays(from, range),
+									FMT_HYBASE_yMd) + "]");
+
+			TRSExport export = new TRSExport(connection,
+					new TRSExport.IRecordListener() {
+
+						@Override
+						public boolean onRecord(TRSRecord record)
+								throws Exception {
+							List<String> values = new ArrayList<String>(
+									bodyArgs.size());
+
+							for (String field : bodyArgs) {
+								String value = record.getString(field);
+								values.add(StringUtils
+										.defaultString(StringUtils.startsWith(
+												value, "@") ? "//" + value
+												: value));
+							}
+							Map<String, String> header = new HashMap<String, String>(
+									headers.length);
+							for (String key : headers) {
+								header.put(key, record.getString(key));
+							}
+							buffer.add(EventBuilder.withBody(
+									String.format(body, values.toArray())
+											.getBytes(), header));
+							return true;
+						}
+
+						@Override
+						public void onEnd() throws Exception {
+
+						}
+
+						@Override
+						public void onBegin() throws Exception {
+
+						}
+
+						@Override
+						public String getDataDir() {
+							return exportTmp.toString();
+						}
+					});
+
+			long succeed = 0;
+
 			try {
-				resultSet = connection.executeSelect(this.database, query,
-						watermark.getOffset(), batchSize, params);
+				succeed = export.export(database, query, 0, Integer.MAX_VALUE,
+						params);
 			} catch (TRSException e) {
-				LOG.error("fail to select " + database + " by " + query, e);
+				LOG.error("fail to export " + database + " by " + query, e);
 				return Status.BACKOFF;
 			}
-			if (resultSet.size() == 0) {
-				resultSet.close();
-				return Status.BACKOFF;
-			}
-			for (int i = 0; i < Math.min(batchSize, resultSet.size()); i++) {
-				resultSet.moveNext();
-				try {
-					TRSRecord record = resultSet.get();
 
-					List<String> values = new ArrayList<String>(
-							this.bodyArgs.size());
+			from = DateUtils.addSeconds(from, step);
 
-					for (String field : this.bodyArgs) {
-						String value = record.getString(field);
-						values.add(StringUtils.defaultString(StringUtils
-								.startsWith(value, "@") ? "//" + value : value));
-					}
-					Map<String, String> header = new HashMap<String, String>(
-							this.headers.length);
-					for (String key : this.headers) {
-						header.put(key, record.getString(key));
-					}
-					buffer.add(EventBuilder.withBody(
-							String.format(body, values.toArray()).getBytes(),
-							header));
-					watermark.rise(record.getString(watermark.getApplyTo()));
-				} catch (TRSException e) {
-					LOG.error("can not read data from resultset " + watermark,
-							e);
-					break;
-				}
-			}
-
-			LOG.debug("{} record(s) ingested. current watermark:{}",
-					resultSet.size(), watermark);
+			LOG.debug("{} record(s) ingested. current query {}}", succeed,
+					query);
 			getChannelProcessor().processEventBatch(buffer);
 			sourceCounter.incrementAppendBatchAcceptedCount();
 			sourceCounter.addToEventAcceptedCount(buffer.size());
-			resultSet.close();
 		}
 		return status;
 	}
