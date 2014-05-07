@@ -30,6 +30,7 @@ import org.apache.flume.source.AbstractSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.trs.dev4.jdk16.utils.DateUtil;
 import com.trs.hybase.client.TRSConnection;
 import com.trs.hybase.client.TRSException;
 import com.trs.hybase.client.TRSRecord;
@@ -198,9 +199,16 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 			TRSResultSet resultSet = null;
 			SearchParams params = new SearchParams();
 			params.setSortMethod("+" + watermark.getApplyTo());
-			params.setProperty("search.range.filter",
-					"IR_URLDATE:[" + DateUtils.addDays(cursor, -range) + " TO "
-							+ DateUtils.addDays(cursor, range) + "]");
+			params.setProperty(
+					"search.range.filter",
+					"IR_URLDATE:["
+							+ DateUtil.date2String(
+									DateUtils.addDays(cursor, -range),
+									"yyyy/MM/dd")
+							+ " TO "
+							+ DateUtil.date2String(
+									DateUtils.addDays(cursor, range),
+									"yyyy/MM/dd") + "]");
 			try {
 				resultSet = connection.executeSelect(this.database, query,
 						watermark.getOffset(), batchSize, params);
