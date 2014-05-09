@@ -210,18 +210,16 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 					+ (StringUtils.isEmpty(filter) ? "" : " AND (" + filter
 							+ ")");
 
+			String rangeFilter = partition
+					+ ":["
+					+ DateUtil.date2String(DateUtils.addDays(from, -range),
+							FMT_HYBASE_yMd)
+					+ " TO "
+					+ DateUtil.date2String(DateUtils.addDays(from, range),
+							FMT_HYBASE_yMd) + "]";
+
 			SearchParams params = new SearchParams();
-			params.setProperty(
-					"search.range.filter",
-					partition
-							+ ":["
-							+ DateUtil.date2String(
-									DateUtils.addDays(from, -range),
-									FMT_HYBASE_yMd)
-							+ " TO "
-							+ DateUtil.date2String(
-									DateUtils.addDays(from, range),
-									FMT_HYBASE_yMd) + "]");
+			params.setProperty("search.range.filter", rangeFilter);
 
 			TRSExport export = new TRSExport(connection,
 					new TRSExport.IRecordListener() {
@@ -278,8 +276,9 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 
 			from = DateUtils.addSeconds(from, step);
 
-			LOG.debug("{} record(s) ingested. current query {}}", succeed,
-					query);
+			LOG.info(
+					"{} record(s) ingested. current query {} and range filter {}.",
+					new Object[] { succeed, query, rangeFilter });
 			getChannelProcessor().processEventBatch(buffer);
 			sourceCounter.incrementAppendBatchAcceptedCount();
 			sourceCounter.addToEventAcceptedCount(buffer.size());
