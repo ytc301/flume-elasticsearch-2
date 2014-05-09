@@ -30,6 +30,7 @@ import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
 import org.apache.flume.instrumentation.SinkCounter;
 import org.apache.flume.sink.AbstractSink;
+import org.codehaus.jackson.map.ObjectMapper;
 import org.redisson.Config;
 import org.redisson.Redisson;
 import org.slf4j.Logger;
@@ -117,6 +118,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 		props = new Properties();
 		props.put("metadata.broker.list", kafkaHost + ":" + kafkaPort);
+		props.put("serializer.class", "kafka.serializer.StringEncoder");
 		props.put("request.required.acks", "1");
 	}
 
@@ -167,6 +169,11 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected void load() throws IOException {
 		tempDB = String.format("%s_%s", dbTemplate, System.currentTimeMillis());
 		try {
+			new TRSDataBase(connection, tempDB).create(dbTemplate + ".*");
+		} catch (TRSException e) {
+			LOG.error("create {} failed. ", tempDB, e);
+		}
+		try {
 			TRSConnection.setCharset(TRSConstant.TCE_CHARSET_UTF8, false);
 			RecordReport report = connection.loadRecords(tempDB, dbUsername,
 					buffer.toString(), null, false);
@@ -189,12 +196,14 @@ public class FeedSink extends AbstractSink implements Configurable {
 	}
 
 	protected void fanout() {
-		final Producer<String, Map<String, String>> producer = new Producer<String, Map<String, String>>(
+		final Producer<String, String> producer = new Producer<String, String>(
 				new ProducerConfig(props));
 
 		ConcurrentMap<String, String> subscribers = redisson
 				.getMap(subscribersKey);
 		for (String topic : subscribers.keySet()) {
+			LOG.info("The subscribers topic {}, trsl {}", topic,
+					subscribers.get(topic));
 			TRSResultSet resultSet = null;
 			try {
 				resultSet = connection.executeSelect(tempDB,
@@ -205,18 +214,30 @@ public class FeedSink extends AbstractSink implements Configurable {
 								+ subscribers.get(topic), e);
 				continue;
 			}
+			LOG.info("select {} by {}, resultset count {}", tempDB,
+					subscribers.get(topic), resultSet.getRecordCount());
 			try {
 				for (int i = 0; i < resultSet.getRecordCount(); i++) {
 					resultSet.moveTo(0, i);
 
 					Map<String, String> record = new HashMap<String, String>();
-					for (int cc = 0; cc < resultSet.getClassCount(); cc++) {
+					for (int cc = 0; cc < resultSet.getColumnCount(); cc++) {
 						record.put(resultSet.getColumnName(cc),
 								resultSet.getString(cc));
 					}
 
-					KeyedMessage<String, Map<String, String>> message = new KeyedMessage<String, Map<String, String>>(
-							topic, record);
+					String recordJSON = null;
+
+					try {
+						recordJSON = new ObjectMapper()
+								.writeValueAsString(record);
+					} catch (Exception e) {
+						LOG.error("record to json failed. ", e);
+					}
+
+					KeyedMessage<String, String> message = new KeyedMessage<String, String>(
+							topic, recordJSON);
+
 					producer.send(message);
 					LOG.info("producer send topic {}", topic);
 				}
@@ -227,9 +248,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 				resultSet.close();
 			}
 		}
-
-		producer.close();
-
 	}
 
 	protected void clean() {
