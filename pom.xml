@@ -19,7 +19,8 @@
 	        <module>trsserver-source</module>
 		<module>nlp-interceptor</module>
 	        <module>trsserver-weibo-userinfo-source</module>
-  	</modules>
+    <module>trsserver-cleaner</module>
+  </modules>
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
