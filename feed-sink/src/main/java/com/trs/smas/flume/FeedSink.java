@@ -28,7 +28,6 @@ import org.apache.flume.Event;
 import org.apache.flume.EventDeliveryException;
 import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
-import org.apache.flume.instrumentation.SinkCounter;
 import org.apache.flume.sink.AbstractSink;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.redisson.Config;
@@ -89,7 +88,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected String kafkaHost;
 	protected String kafkaPort;
 
-	protected SinkCounter sinkCounter;
+	protected FeedCounter feedCounter;
 	protected int batchSize;
 	protected Path bufferDir;
 	protected Path backupDir;
@@ -99,12 +98,11 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 	@Override
 	public synchronized void start() {
-		sinkCounter.start();
+		feedCounter.start();
 		super.start();
 		try {
 			connection = new TRSConnection();
 			connection.connect(dbHost, dbPort, dbUsername, dbPassword);
-
 			connection.setBufferPath(backupDir.toString());
 		} catch (TRSException e) {
 			throw new RuntimeException(
@@ -127,7 +125,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 		connection.close();
 		redisson.shutdown();
 		super.stop();
-		sinkCounter.stop();
+		feedCounter.stop();
 	}
 
 	public Path selectBuffer(Event e) throws IOException {
@@ -181,11 +179,12 @@ public class FeedSink extends AbstractSink implements Configurable {
 			LOG.info("{} loaded on {}. success: " + report.lSuccessNum
 					+ ", failure: " + report.lFailureNum + "",
 					buffer.toString(), getName());
-			sinkCounter.addToEventDrainSuccessCount(report.lSuccessNum);
+			feedCounter.addToLoadSuccessCount(report.lSuccessNum);
 
 			if (StringUtils.isEmpty(report.WrongFile)) {// Backup
 				Files.delete(buffer);
 			} else {
+				feedCounter.addToLoadFailureCount(report.lFailureNum);
 				backup(report.WrongFile, buffer);
 			}
 		} catch (TRSException e) {
@@ -196,6 +195,8 @@ public class FeedSink extends AbstractSink implements Configurable {
 	}
 
 	protected void fanout() {
+		final long begin = System.currentTimeMillis();
+
 		final Producer<String, String> producer = new Producer<String, String>(
 				new ProducerConfig(props));
 
@@ -212,8 +213,10 @@ public class FeedSink extends AbstractSink implements Configurable {
 				LOG.error(
 						"fail to select " + tempDB + " by "
 								+ subscribers.get(topic), e);
+				feedCounter.incrementFanoutSelectFailureCount();
 				continue;
 			}
+			feedCounter.incrementFanoutSelectSuccessCount();
 			LOG.info("select {} by {}, resultset count {}", tempDB,
 					subscribers.get(topic), resultSet.getRecordCount());
 			try {
@@ -239,6 +242,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 							topic, recordJSON);
 
 					producer.send(message);
+					feedCounter.incrementFanoutSendCount();
 					LOG.info("producer send topic {}", topic);
 				}
 			} catch (TRSException e) {
@@ -248,6 +252,8 @@ public class FeedSink extends AbstractSink implements Configurable {
 				resultSet.close();
 			}
 		}
+		final long end = System.currentTimeMillis();
+		feedCounter.setFanoutTime(end - begin);
 	}
 
 	protected void clean() {
@@ -280,16 +286,10 @@ public class FeedSink extends AbstractSink implements Configurable {
 					break;
 				}
 				TRSFileBuilder.append(selectBuffer(event), event, format);
-				sinkCounter.incrementEventDrainAttemptCount();
 			}
 
 			if (count == 0) {
-				sinkCounter.incrementBatchEmptyCount();
 				status = Status.BACKOFF;
-			} else if (count < batchSize) {
-				sinkCounter.incrementBatchUnderflowCount();
-			} else {
-				sinkCounter.incrementBatchCompleteCount();
 			}
 
 			if (count > 0) {
@@ -298,7 +298,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 				clean();
 			}
 
-			sinkCounter.addToEventDrainSuccessCount(count);
 			transaction.commit();
 		} catch (ChannelException e) {
 			transaction.rollback();
@@ -345,8 +344,8 @@ public class FeedSink extends AbstractSink implements Configurable {
 		backupDir = FileSystems.getDefault().getPath(
 				context.getString("backupDir"));
 
-		if (sinkCounter == null) {
-			sinkCounter = new SinkCounter(getName());
+		if (feedCounter == null) {
+			feedCounter = new FeedCounter(getName());
 		}
 	}
 
