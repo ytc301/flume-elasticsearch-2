@@ -6,6 +6,8 @@
 package com.trs.smas.flume;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -128,9 +130,13 @@ public class FeedSink extends AbstractSink implements Configurable {
 		feedCounter.stop();
 	}
 
-	public Path selectBuffer(Event e) throws IOException {
+	public Path selectBuffer(Event e) {
 		if (buffer == null) {
-			buffer = Files.createTempFile(bufferDir, getName(), ".trs");
+			try {
+				buffer = Files.createTempFile(bufferDir, getName(), ".trs");
+			} catch (IOException e1) {
+				LOG.error("create temp trs file failed.", e);
+			}
 		}
 		return buffer;
 	}
@@ -148,23 +154,22 @@ public class FeedSink extends AbstractSink implements Configurable {
 	}
 
 	protected void backup(TRSException error, Path buffer) throws IOException {
-		Path errorFile = FileSystems.getDefault().getPath(
-				error.getErrorString());
-		if (Files.exists(errorFile)) {
-			Files.move(errorFile, backupDir.resolve(String.format("%s.%s",
-					System.currentTimeMillis(), errorFile.getFileName()
-							.toString())), StandardCopyOption.REPLACE_EXISTING);
-		} else {
-			Files.write(backupDir.resolve(String.format("%s.%s",
-					System.currentTimeMillis(), "ERR")), error.getErrorString()
-					.getBytes(), StandardOpenOption.CREATE);
-		}
+		StringWriter sw = new StringWriter();
+		PrintWriter pw = new PrintWriter(sw, true);
+		error.printStackTrace(pw);
+		pw.flush();
+		sw.flush();
+
+		Files.write(backupDir.resolve(String.format("%s.%s",
+				System.currentTimeMillis(), "ERR")), sw.toString().getBytes(),
+				StandardOpenOption.CREATE);
+
 		Files.move(buffer, backupDir.resolve(String.format("%s.%s",
 				System.currentTimeMillis(), buffer.getFileName().toString())),
 				StandardCopyOption.REPLACE_EXISTING);
 	}
 
-	protected void load() throws IOException {
+	protected void load() {
 		tempDB = String.format("%s_%s", dbTemplate, System.currentTimeMillis());
 		try {
 			new TRSDataBase(connection, tempDB).create(dbTemplate + ".*");
@@ -182,13 +187,25 @@ public class FeedSink extends AbstractSink implements Configurable {
 			feedCounter.addToLoadSuccessCount(report.lSuccessNum);
 
 			if (StringUtils.isEmpty(report.WrongFile)) {// Backup
-				Files.delete(buffer);
+				try {
+					Files.delete(buffer);
+				} catch (IOException e) {
+					LOG.error("LOAD ERROR: delete trs file failed.", e);
+				}
 			} else {
 				feedCounter.addToLoadFailureCount(report.lFailureNum);
-				backup(report.WrongFile, buffer);
+				try {
+					backup(report.WrongFile, buffer);
+				} catch (IOException e) {
+					LOG.error("LOAD ERROR: backup wrong file failed.", e);
+				}
 			}
 		} catch (TRSException e) {
-			backup(e, buffer);
+			try {
+				backup(e, buffer);
+			} catch (IOException e1) {
+				LOG.error("LOAD ERROR: backup exception file failed.", e);
+			}
 		} finally {
 			buffer = null;
 		}
@@ -203,7 +220,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 		ConcurrentMap<String, String> subscribers = redisson
 				.getMap(subscribersKey);
 		for (String topic : subscribers.keySet()) {
-			LOG.info("The subscribers topic {}, trsl {}", topic,
+			LOG.debug("The subscribers topic {}, trsl {}", topic,
 					subscribers.get(topic));
 			TRSResultSet resultSet = null;
 			try {
@@ -243,9 +260,9 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 					producer.send(message);
 					feedCounter.incrementFanoutSendCount();
-					LOG.info("producer send topic {}", topic);
+					LOG.debug("producer send topic {}", topic);
 				}
-			} catch (TRSException e) {
+			} catch (Exception e) {
 				LOG.error("can not read data from resultset " + resultSet, e);
 				continue;
 			} finally {
@@ -295,7 +312,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 			if (count > 0) {
 				load();
 				fanout();
-				clean();
 			}
 
 			transaction.commit();
@@ -310,6 +326,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 			LOG.error("Failed to deliver event. Exception follows.", ex);
 			throw new EventDeliveryException("Failed to deliver event", ex);
 		} finally {
+			clean();
 			transaction.close();
 		}
 
