@@ -6,6 +6,8 @@
 package com.trs.smas.flume;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,7 +32,7 @@ import com.trs.client.TRSException;
 /**
  * 
  * @since huangshengbo @ Apr 23, 2014 6:58:40 PM
- *
+ * 
  */
 public abstract class AbstractTRSServerSink extends AbstractSink implements
 		Configurable {
@@ -59,7 +61,7 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 		try {
 			connection = new TRSConnection();
 			connection.connect(host, port, username, password);
-			
+
 			connection.setBufferPath(backupDir.toString());
 		} catch (TRSException e) {
 			throw new RuntimeException(
@@ -75,36 +77,37 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 	}
 
 	public abstract Path selectBuffer(Event e) throws IOException;
-	
+
 	public abstract void load() throws IOException;
-	
-	protected void backup(String errorFile, Path buffer) throws IOException{
-		Path errorPath = FileSystems.getDefault().getPath(
-				errorFile);
-		Files.move(errorPath, backupDir.resolve(String.format(
-				"%s.%s", System.currentTimeMillis(), 
-				errorPath.getFileName().toString())),
-				StandardCopyOption.REPLACE_EXISTING);
-		Files.move(buffer, backupDir.resolve(String.format(
-				"%s.%s.%s", System.currentTimeMillis(),
-				errorPath.getFileName().toString(), 
+
+	protected void backup(String errorFile, Path buffer) throws IOException {
+		Path errorPath = FileSystems.getDefault().getPath(errorFile);
+		Files.move(errorPath,
+				backupDir.resolve(String.format("%s.%s", System
+						.currentTimeMillis(), errorPath.getFileName()
+						.toString())), StandardCopyOption.REPLACE_EXISTING);
+		Files.move(buffer, backupDir.resolve(String.format("%s.%s.%s",
+				System.currentTimeMillis(), errorPath.getFileName().toString(),
 				buffer.getFileName().toString())),
 				StandardCopyOption.REPLACE_EXISTING);
 	}
-	
-	protected void backup(TRSException error, Path buffer) throws IOException{
-		Path errorFile = FileSystems.getDefault().getPath(error.getErrorString());
-		if(Files.exists(errorFile)){
-			Files.move(errorFile, backupDir.resolve(String.format("%s.%s", System.currentTimeMillis(), errorFile.getFileName().toString())), StandardCopyOption.REPLACE_EXISTING);
-		} else {
-			Files.write(backupDir.resolve(String.format("%s.%s", System.currentTimeMillis(), "ERR")), error.getErrorString().getBytes(), StandardOpenOption.CREATE);
-		}
+
+	protected void backup(TRSException error, Path buffer) throws IOException {
+		StringWriter sw = new StringWriter();
+		PrintWriter pw = new PrintWriter(sw, true);
+		error.printStackTrace(pw);
+		pw.flush();
+		sw.flush();
+
+		Files.write(backupDir.resolve(String.format("%s.%s",
+				System.currentTimeMillis(), "ERR")), sw.toString().getBytes(),
+				StandardOpenOption.CREATE);
+
 		Files.move(buffer, backupDir.resolve(String.format("%s.%s",
-				System.currentTimeMillis(), 
-				buffer.getFileName().toString())),
+				System.currentTimeMillis(), buffer.getFileName().toString())),
 				StandardCopyOption.REPLACE_EXISTING);
 	}
-	
+
 	/*
 	 * (non-Javadoc)
 	 * 
@@ -135,8 +138,8 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 			} else {
 				sinkCounter.incrementBatchCompleteCount();
 			}
-			
-			if(i > 0){
+
+			if (i > 0) {
 				load();
 			}
 			transaction.commit();
@@ -169,7 +172,8 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 		username = context.getString("username", "system");
 		password = context.getString("password", "manager");
 		database = context.getString("database");
-		format = context.getString("format",TRSFileBuilder.BODY_PLACEHOLDER) + "\n";
+		format = context.getString("format", TRSFileBuilder.BODY_PLACEHOLDER)
+				+ "\n";
 		batchSize = context.getInteger("batchSize", 1000);
 
 		bufferDir = FileSystems.getDefault().getPath(
