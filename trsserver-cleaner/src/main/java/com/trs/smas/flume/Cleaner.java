@@ -1,54 +1,43 @@
 package com.trs.smas.flume;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.FileSystems;
-import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Date;
+
+import org.apache.commons.lang.time.DateUtils;
 
 import com.trs.client.TRSConnection;
 import com.trs.client.TRSException;
+import com.trs.dev4.jdk16.utils.DateUtil;
 
 public class Cleaner {
 
 	/**
 	 * @param args
-	 *            args[0] = tables.conf args[1] = dbs.conf args[2] = filter
+	 *            system manager2013admin 8899 hotspot
+	 *            192.168.200.2；……；192.168，200.9 IR_GW_LOADTIME -3
 	 */
 	public static void main(String[] args) {
-		if (args.length != 3) {
-			System.out
-					.println("please check input! e.g. java -jar Cleaner.jar /path/tables.conf /path/dbs.conf filter");
+		if (args.length != 7) {
+			System.out.println("please check input!");
 		}
 
-		List<String> tables = new ArrayList<String>();
-		List<String> dbs = new ArrayList<String>();
+		String username = args[0];
+		String password = args[1];
+		String port = args[2];
+		String[] hosts = args[3].split(";");
+		String[] dbs = args[4].split(";");
+		String filter = args[5];
+		int days = Integer.parseInt(args[6]);
 
-		try {
-			tables = Files.readAllLines(
-					FileSystems.getDefault().getPath(args[0]),
-					StandardCharsets.UTF_8);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		String query = filter
+				+ " <= "
+				+ DateUtil.date2String(DateUtils.addDays(new Date(), days),
+						"yyyy.MM.dd HH:mm:ss");
 
-		try {
-			dbs = Files.readAllLines(FileSystems.getDefault().getPath(args[1]),
-					StandardCharsets.UTF_8);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		System.out.println(query);
 
-		for (String table : tables) {
-			if (!table.trim().isEmpty()) {
-				for (String db : dbs) {
-					String[] propes = db.trim().split("\t");
-					if (!db.trim().isEmpty() && propes.length == 4) {
-						clear(propes[0], propes[1], propes[2], propes[3],
-								table, args[2].trim());
-					}
-				}
+		for (String host : hosts) {
+			for (String db : dbs) {
+				clear(host, port, username, password, db, query);
 			}
 		}
 	}
@@ -71,6 +60,5 @@ public class Cleaner {
 				conn.close();
 			conn = null;
 		}
-
 	}
 }
