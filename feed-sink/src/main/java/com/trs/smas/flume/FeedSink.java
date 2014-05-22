@@ -43,6 +43,7 @@ import com.trs.client.TRSConstant;
 import com.trs.client.TRSDataBase;
 import com.trs.client.TRSException;
 import com.trs.client.TRSResultSet;
+import com.trs.dev4.jdk16.utils.StringHelper;
 
 /**
  * 配置示例:<br/>
@@ -212,6 +213,13 @@ public class FeedSink extends AbstractSink implements Configurable {
 	}
 
 	protected void fanout() {
+		feedCounter.resetFanoutSelectStatist();
+		feedCounter.resetFanoutSendStatist();
+		feedCounter.setCurrentFanoutCount(0);
+		feedCounter.setCurrentFanoutSelectFailureCount(0);
+		feedCounter.setCurrentFanoutSelectSuccessCount(0);
+		feedCounter.setCurrentFanoutSendCount(0);
+
 		final long begin = System.currentTimeMillis();
 
 		final Producer<String, String> producer = new Producer<String, String>(
@@ -220,22 +228,31 @@ public class FeedSink extends AbstractSink implements Configurable {
 		ConcurrentMap<String, String> subscribers = redisson
 				.getMap(subscribersKey);
 		for (String topic : subscribers.keySet()) {
-			LOG.debug("The subscribers topic {}, trsl {}", topic,
-					subscribers.get(topic));
+
+			final long innerSelectBegin = System.currentTimeMillis();
+
 			TRSResultSet resultSet = null;
 			try {
 				resultSet = connection.executeSelect(tempDB,
 						subscribers.get(topic), false);
+				feedCounter.incrementFanoutSelectSuccessCount();
+				feedCounter.incrementCurrentFanoutSelectSuccessCount();
 			} catch (TRSException e) {
 				LOG.error(
 						"fail to select " + tempDB + " by "
 								+ subscribers.get(topic), e);
 				feedCounter.incrementFanoutSelectFailureCount();
+				feedCounter.incrementCurrentFanoutSelectFailureCount();
 				continue;
 			}
-			feedCounter.incrementFanoutSelectSuccessCount();
+			final long innerSelectEnd = System.currentTimeMillis();
+			final long innerSelectTotal = innerSelectEnd - innerSelectBegin;
+			feedCounter.addFanoutSelectStatist(innerSelectTotal);
+
 			LOG.info("select {} by {}, resultset count {}", tempDB,
 					subscribers.get(topic), resultSet.getRecordCount());
+
+			final long innerSendBegin = System.currentTimeMillis();
 			try {
 				for (int i = 0; i < resultSet.getRecordCount(); i++) {
 					resultSet.moveTo(0, i);
@@ -260,6 +277,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 					producer.send(message);
 					feedCounter.incrementFanoutSendCount();
+					feedCounter.incrementCurrentFanoutSendCount();
 					LOG.debug("producer send topic {}", topic);
 				}
 			} catch (Exception e) {
@@ -268,19 +286,35 @@ public class FeedSink extends AbstractSink implements Configurable {
 			} finally {
 				resultSet.close();
 			}
+			feedCounter.incrementFanoutCount();
+			feedCounter.incrementCurrentFanoutCount();
+
+			final long innerSendEnd = System.currentTimeMillis();
+			final long innerSendTotal = innerSendEnd - innerSendBegin;
+			feedCounter.addFanoutSendStatist(innerSendTotal);
+			
+			LOG.info(topic + "\t" + subscribers.get(topic) + "\t"
+					+ resultSet.getRecordCount() + "\t" + innerSendTotal);// topic\ttrsl\tcount\ttime
 		}
 		final long end = System.currentTimeMillis();
-		feedCounter.setFanoutTime(end - begin);
+		final long total = end - begin;
+		feedCounter.setFanoutTime(total);
+		LOG.info("fanout time is " + total);
+		feedCounter.incrementFanoutRoundCount();
 	}
 
 	protected void clean() {
-		try {
-			TRSDataBase[] databases = connection.getDataBases(tempDB);
-			for (TRSDataBase database : databases) {
-				database.delete();
+		if (StringHelper.isNotEmpty(tempDB)) {
+			try {
+				TRSDataBase[] databases = connection.getDataBases(tempDB);
+				for (TRSDataBase database : databases) {
+					database.delete();
+				}
+				feedCounter.incrementCleanSuccessCount();
+			} catch (TRSException e) {
+				feedCounter.incrementCleanFailureCount();
+				LOG.error("database clean failed! ", e);
 			}
-		} catch (TRSException e) {
-			LOG.error("database clean failed! ", e);
 		}
 	}
 
@@ -312,6 +346,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 			if (count > 0) {
 				load();
 				fanout();
+				clean();
 			}
 
 			transaction.commit();
@@ -326,7 +361,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 			LOG.error("Failed to deliver event. Exception follows.", ex);
 			throw new EventDeliveryException("Failed to deliver event", ex);
 		} finally {
-			clean();
 			transaction.close();
 		}
 
