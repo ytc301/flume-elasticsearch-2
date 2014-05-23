@@ -197,7 +197,7 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 		if (from != null
 				&& from.before(DateUtils.addMinutes(new Date(), delay))) {
 
-			buffer = new ArrayList<Event>(batchSize);
+			buffer = new ArrayList<Event>();
 
 			String query = "("
 					+ watermark
@@ -245,6 +245,14 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 							buffer.add(EventBuilder.withBody(
 									String.format(body, values.toArray())
 											.getBytes(), header));
+							if (buffer.size() >= batchSize) {
+								getChannelProcessor().processEventBatch(buffer);
+								sourceCounter
+										.incrementAppendBatchAcceptedCount();
+								sourceCounter.addToEventAcceptedCount(buffer
+										.size());
+								buffer.clear();
+							}
 							return true;
 						}
 
@@ -279,9 +287,11 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 			LOG.info(
 					"{} record(s) ingested. current query {} and range filter {}.",
 					new Object[] { succeed, query, rangeFilter });
-			getChannelProcessor().processEventBatch(buffer);
-			sourceCounter.incrementAppendBatchAcceptedCount();
-			sourceCounter.addToEventAcceptedCount(buffer.size());
+			if (buffer.size() > 0) {
+				getChannelProcessor().processEventBatch(buffer);
+				sourceCounter.incrementAppendBatchAcceptedCount();
+				sourceCounter.addToEventAcceptedCount(buffer.size());
+			}
 		}
 		return status;
 	}
