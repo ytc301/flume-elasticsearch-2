@@ -17,6 +17,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
+import java.util.concurrent.RecursiveTask;
 
 import kafka.producer.KeyedMessage;
 import kafka.javaapi.producer.Producer;
@@ -80,7 +84,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected String dbTemplate;
 	protected String format;
 
-	protected TRSConnection connection;
+	protected TRSConnectionPool dbPools;
 
 	protected Redisson redisson;
 
@@ -103,14 +107,8 @@ public class FeedSink extends AbstractSink implements Configurable {
 	public synchronized void start() {
 		feedCounter.start();
 		super.start();
-		try {
-			connection = new TRSConnection();
-			connection.connect(dbHost, dbPort, dbUsername, dbPassword);
-			connection.setBufferPath(backupDir.toString());
-		} catch (TRSException e) {
-			throw new RuntimeException(
-					"Unable to create connection to trsserver", e);
-		}
+		dbPools = new TRSConnectionPool(dbHost, dbPort, dbUsername, dbPassword,
+				backupDir.toString());
 
 		Config config = new Config();
 		config.setConnectionPoolSize(10);
@@ -125,7 +123,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 	@Override
 	public synchronized void stop() {
-		connection.close();
+		dbPools.destroy();
 		redisson.shutdown();
 		super.stop();
 		feedCounter.stop();
@@ -171,6 +169,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 	}
 
 	protected void load() {
+		TRSConnection connection = dbPools.getTRSConnection();
 		tempDB = String.format("%s_%s", dbTemplate, System.currentTimeMillis());
 		try {
 			new TRSDataBase(connection, tempDB).create(dbTemplate + ".*");
@@ -209,6 +208,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 			}
 		} finally {
 			buffer = null;
+			dbPools.releaseConn(connection);
 		}
 	}
 
@@ -220,82 +220,136 @@ public class FeedSink extends AbstractSink implements Configurable {
 		feedCounter.setCurrentFanoutSelectSuccessCount(0);
 		feedCounter.setCurrentFanoutSendCount(0);
 
-		final long begin = System.currentTimeMillis();
-
-		final Producer<String, String> producer = new Producer<String, String>(
-				new ProducerConfig(props));
-
-		ConcurrentMap<String, String> subscribers = redisson
+		final ConcurrentMap<String, String> subscribers = redisson
 				.getMap(subscribersKey);
-		for (String topic : subscribers.keySet()) {
+		final String[] subscribersKeys = subscribers.keySet().toArray(
+				new String[] {});
 
-			final long innerSelectBegin = System.currentTimeMillis();
+		class FeedTask extends RecursiveTask<Long> {
+			private static final long serialVersionUID = -7507406545171937726L;
 
-			TRSResultSet resultSet = null;
-			try {
-				resultSet = connection.executeSelect(tempDB,
-						subscribers.get(topic), false);
-				feedCounter.incrementFanoutSelectSuccessCount();
-				feedCounter.incrementCurrentFanoutSelectSuccessCount();
-			} catch (TRSException e) {
-				LOG.error(
-						"fail to select " + tempDB + " by "
-								+ subscribers.get(topic), e);
-				feedCounter.incrementFanoutSelectFailureCount();
-				feedCounter.incrementCurrentFanoutSelectFailureCount();
-				continue;
+			private static final int THRESHOLD = 1000;
+			private int start;
+			private int end;
+
+			public FeedTask(int start, int end) {
+				this.start = start;
+				this.end = end;
 			}
-			final long innerSelectEnd = System.currentTimeMillis();
-			final long innerSelectTotal = innerSelectEnd - innerSelectBegin;
-			feedCounter.addFanoutSelectStatist(innerSelectTotal);
 
-			LOG.info("select {} by {}, resultset count {}", tempDB,
-					subscribers.get(topic), resultSet.getRecordCount());
+			@Override
+			protected Long compute() {
+				long total = 0;
+				boolean canCompute = (end - start) <= THRESHOLD;
 
-			final long innerSendBegin = System.currentTimeMillis();
-			try {
-				for (int i = 0; i < resultSet.getRecordCount(); i++) {
-					resultSet.moveTo(0, i);
+				if (canCompute) {
 
-					Map<String, String> record = new HashMap<String, String>();
-					for (int cc = 0; cc < resultSet.getColumnCount(); cc++) {
-						record.put(resultSet.getColumnName(cc),
-								resultSet.getString(cc));
+					TRSConnection conn = dbPools.getTRSConnection();
+
+					Producer<String, String> producer = new Producer<String, String>(
+							new ProducerConfig(props));
+
+					for (int t = start; t <= end; t++) {
+						String topic = subscribersKeys[t];
+
+						final long innerSelectBegin = System
+								.currentTimeMillis();
+
+						TRSResultSet resultSet = null;
+						try {
+							resultSet = conn.executeSelect(tempDB,
+									subscribers.get(topic), false);
+							feedCounter.incrementFanoutSelectSuccessCount();
+							feedCounter
+									.incrementCurrentFanoutSelectSuccessCount();
+						} catch (TRSException e) {
+							LOG.error("fail to select " + tempDB + " by "
+									+ subscribers.get(topic), e);
+							feedCounter.incrementFanoutSelectFailureCount();
+							feedCounter
+									.incrementCurrentFanoutSelectFailureCount();
+							continue;
+						}
+						final long innerSelectEnd = System.currentTimeMillis();
+						final long innerSelectTotal = innerSelectEnd
+								- innerSelectBegin;
+						feedCounter.addFanoutSelectStatist(innerSelectTotal);
+
+						LOG.info("select {} by {}, resultset count {}", tempDB,
+								subscribers.get(topic),
+								resultSet.getRecordCount());
+
+						final long innerSendBegin = System.currentTimeMillis();
+						try {
+							for (int i = 0; i < resultSet.getRecordCount(); i++) {
+								resultSet.moveTo(0, i);
+
+								Map<String, String> record = new HashMap<String, String>();
+								for (int cc = 0; cc < resultSet
+										.getColumnCount(); cc++) {
+									record.put(resultSet.getColumnName(cc),
+											resultSet.getString(cc));
+								}
+
+								String recordJSON = null;
+
+								try {
+									recordJSON = new ObjectMapper()
+											.writeValueAsString(record);
+								} catch (Exception e) {
+									LOG.error("record to json failed. ", e);
+								}
+
+								KeyedMessage<String, String> message = new KeyedMessage<String, String>(
+										topic, recordJSON);
+
+								producer.send(message);
+								feedCounter.incrementFanoutSendCount();
+								feedCounter.incrementCurrentFanoutSendCount();
+								LOG.debug("producer send topic {}", topic);
+							}
+						} catch (Exception e) {
+							LOG.error("can not read data from resultset "
+									+ resultSet, e);
+							continue;
+						} finally {
+							resultSet.close();
+							dbPools.releaseConn(conn);
+						}
+						feedCounter.incrementFanoutCount();
+						feedCounter.incrementCurrentFanoutCount();
+
+						final long innerSendEnd = System.currentTimeMillis();
+						final long innerSendTotal = innerSendEnd
+								- innerSendBegin;
+						feedCounter.addFanoutSendStatist(innerSendTotal);
 					}
-
-					String recordJSON = null;
-
-					try {
-						recordJSON = new ObjectMapper()
-								.writeValueAsString(record);
-					} catch (Exception e) {
-						LOG.error("record to json failed. ", e);
-					}
-
-					KeyedMessage<String, String> message = new KeyedMessage<String, String>(
-							topic, recordJSON);
-
-					producer.send(message);
-					feedCounter.incrementFanoutSendCount();
-					feedCounter.incrementCurrentFanoutSendCount();
-					LOG.debug("producer send topic {}", topic);
+				} else {
+					int middle = (start + end) / 2;
+					FeedTask leftTask = new FeedTask(start, middle);
+					FeedTask rightTask = new FeedTask(middle, end);
+					leftTask.fork();
+					rightTask.fork();
+					total += leftTask.join();
+					total += rightTask.join();
 				}
-			} catch (Exception e) {
-				LOG.error("can not read data from resultset " + resultSet, e);
-				continue;
-			} finally {
-				resultSet.close();
+				return total;
 			}
-			feedCounter.incrementFanoutCount();
-			feedCounter.incrementCurrentFanoutCount();
 
-			final long innerSendEnd = System.currentTimeMillis();
-			final long innerSendTotal = innerSendEnd - innerSendBegin;
-			feedCounter.addFanoutSendStatist(innerSendTotal);
-			
-			LOG.info(topic + "\t" + subscribers.get(topic) + "\t"
-					+ resultSet.getRecordCount() + "\t" + innerSendTotal);// topic\ttrsl\tcount\ttime
 		}
+
+		final long begin = System.currentTimeMillis();
+		ForkJoinPool forkJoinPool = new ForkJoinPool();
+		FeedTask task = new FeedTask(0, subscribersKeys.length);
+		Future<Long> result = forkJoinPool.submit(task);
+		try {
+			LOG.info("fork join pool total: " + result.get());
+		} catch (InterruptedException e) {
+			LOG.error("InterruptedException", e);
+		} catch (ExecutionException e) {
+			LOG.error("ExecutionException", e);
+		}
+
 		final long end = System.currentTimeMillis();
 		final long total = end - begin;
 		feedCounter.setFanoutTime(total);
@@ -305,6 +359,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 	protected void clean() {
 		if (StringHelper.isNotEmpty(tempDB)) {
+			TRSConnection connection = dbPools.getTRSConnection();
 			try {
 				TRSDataBase[] databases = connection.getDataBases(tempDB);
 				for (TRSDataBase database : databases) {
@@ -314,6 +369,8 @@ public class FeedSink extends AbstractSink implements Configurable {
 			} catch (TRSException e) {
 				feedCounter.incrementCleanFailureCount();
 				LOG.error("database clean failed! ", e);
+			} finally {
+				dbPools.releaseConn(connection);
 			}
 		}
 	}
@@ -428,4 +485,5 @@ public class FeedSink extends AbstractSink implements Configurable {
 					StandardOpenOption.APPEND);
 		}
 	}
+
 }

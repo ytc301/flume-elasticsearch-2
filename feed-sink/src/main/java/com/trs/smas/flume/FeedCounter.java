@@ -166,7 +166,7 @@ public class FeedCounter extends MonitoredCounterGroup implements
 		return currentSendStatistics.getMin();
 	}
 
-	public double getFanoutSendtMax() {
+	public double getFanoutSendMax() {
 		return currentSendStatistics.getMax();
 	}
 

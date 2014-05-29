@@ -45,7 +45,7 @@ public interface FeedCounterMBean {
 
 	double getFanoutSendMin();
 
-	double getFanoutSendtMax();
+	double getFanoutSendMax();
 
 	double getFanoutSendMean();
 
