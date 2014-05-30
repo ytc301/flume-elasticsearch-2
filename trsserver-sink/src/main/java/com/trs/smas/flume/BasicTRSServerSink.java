@@ -57,6 +57,9 @@ public class BasicTRSServerSink extends AbstractTRSServerSink {
 	 */
 	@Override
 	public void load() throws IOException {
+		if (!connection.isValid() || connection.close()) {
+			super.initDB();
+		}
 		try {
 			TRSConnection.setCharset(TRSConstant.TCE_CHARSET_UTF8, false);
 			RecordReport report = connection.loadRecords(database,
@@ -75,7 +78,5 @@ public class BasicTRSServerSink extends AbstractTRSServerSink {
 		}finally{
 			buffer = null;
 		}
-		
 	}
-
 }

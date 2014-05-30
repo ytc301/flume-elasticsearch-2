@@ -58,22 +58,27 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 	public synchronized void start() {
 		sinkCounter.start();
 		super.start();
+		initDB();
+	}
+
+	@Override
+	public synchronized void stop() {
+		if(connection.isValid()){
+			connection.close();
+		}
+		super.stop();
+		sinkCounter.stop();
+	}
+
+	public void initDB() {
 		try {
 			connection = new TRSConnection();
 			connection.connect(host, port, username, password);
-
 			connection.setBufferPath(backupDir.toString());
 		} catch (TRSException e) {
 			throw new RuntimeException(
 					"Unable to create connection to trsserver", e);
 		}
-	}
-
-	@Override
-	public synchronized void stop() {
-		connection.close();
-		super.stop();
-		sinkCounter.stop();
 	}
 
 	public abstract Path selectBuffer(Event e) throws IOException;

@@ -48,14 +48,14 @@ public class MultiplexTRSServerSink extends AbstractTRSServerSink {
 		databaseArgs = new ArrayList<String>(10);
 		Pattern pattern = Pattern.compile("\\{(.*?)\\}");
 		Matcher matcher = pattern.matcher(database);
-		while(matcher.find()){
+		while (matcher.find()) {
 			databaseArgs.add(matcher.group(1));
 		}
-		for( String arg : databaseArgs){
-			database = database.replace("{"+ arg+"}", "%s");
+		for (String arg : databaseArgs) {
+			database = database.replace("{" + arg + "}", "%s");
 		}
 	}
-	
+
 	/*
 	 * (non-Javadoc)
 	 * 
@@ -86,6 +86,9 @@ public class MultiplexTRSServerSink extends AbstractTRSServerSink {
 	 */
 	@Override
 	public void load() throws IOException {
+		if (!connection.isValid() || connection.close()) {
+			super.initDB();
+		}
 		for (String db : buffers.keySet()) {
 			Path bufferFile = buffers.get(db);
 			try {
@@ -103,8 +106,8 @@ public class MultiplexTRSServerSink extends AbstractTRSServerSink {
 				}
 			} catch (TRSException e) {
 				backup(e, bufferFile);
-			} catch (Exception e){
-				LOG.error("Exception when load "+bufferFile, e);
+			} catch (Exception e) {
+				LOG.error("Exception when load " + bufferFile, e);
 			}
 		}
 		buffers.clear();
