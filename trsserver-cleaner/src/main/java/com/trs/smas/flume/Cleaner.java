@@ -16,8 +16,9 @@ public class Cleaner {
 	 *            192.168.200.2；……；192.168，200.9 IR_GW_LOADTIME -3
 	 */
 	public static void main(String[] args) {
-		if (args.length != 7) {
+		if (args.length != 8) {
 			System.out.println("please check input!");
+			return;
 		}
 
 		String username = args[0];
@@ -26,12 +27,13 @@ public class Cleaner {
 		String[] hosts = args[3].split(";");
 		String[] dbs = args[4].split(";");
 		String filter = args[5];
-		int days = Integer.parseInt(args[6]);
+		String format = args[6];
+		int days = Integer.parseInt(args[7]);
 
 		String query = filter
 				+ " <= "
 				+ DateUtil.date2String(DateUtils.addDays(new Date(), days),
-						"yyyy.MM.dd HH:mm:ss");
+						format);
 
 		System.out.println(query);
 
