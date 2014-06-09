@@ -83,8 +83,13 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected String dbPassword;
 	protected String dbTemplate;
 	protected String format;
+	protected int thrsehold;
+	protected boolean isAsync;
+	protected String asyncBatch;
+	protected String asyncTimeout;
 
 	protected TRSConnectionPool dbPools;
+	private Producer<String, String> producer = null;
 
 	protected Redisson redisson;
 
@@ -119,6 +124,20 @@ public class FeedSink extends AbstractSink implements Configurable {
 		props.put("metadata.broker.list", kafkaHost + ":" + kafkaPort);
 		props.put("serializer.class", "kafka.serializer.StringEncoder");
 		props.put("request.required.acks", "1");
+		if (isAsync) {
+			// 异步发送
+			props.put("producer.type", "async");
+			// 每次发送多少条
+			props.put("batch.num.messages", asyncBatch);
+			props.put("queue.enqueue.timeout.ms", asyncTimeout);
+		}
+	}
+
+	public Producer<String, String> getProducer() {
+		if (producer == null) {
+			producer = new Producer<String, String>(new ProducerConfig(props));
+		}
+		return producer;
 	}
 
 	@Override
@@ -228,7 +247,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 		class FeedTask extends RecursiveTask<Long> {
 			private static final long serialVersionUID = -7507406545171937726L;
 
-			private static final int THRESHOLD = 1000;
 			private int start;
 			private int end;
 
@@ -240,14 +258,11 @@ public class FeedSink extends AbstractSink implements Configurable {
 			@Override
 			protected Long compute() {
 				long total = 0;
-				boolean canCompute = (end - start) <= THRESHOLD;
+				boolean canCompute = (end - start) <= thrsehold;
 
 				if (canCompute) {
 
 					TRSConnection conn = dbPools.getTRSConnection();
-
-					Producer<String, String> producer = new Producer<String, String>(
-							new ProducerConfig(props));
 
 					for (int t = start; t <= end; t++) {
 						String topic = subscribersKeys[t];
@@ -287,6 +302,10 @@ public class FeedSink extends AbstractSink implements Configurable {
 								Map<String, String> record = new HashMap<String, String>();
 								for (int cc = 0; cc < resultSet
 										.getColumnCount(); cc++) {
+									if (resultSet.getColumnName(cc).equals(
+											"IR_CONTENT")) {
+										continue;
+									}
 									record.put(resultSet.getColumnName(cc),
 											resultSet.getString(cc));
 								}
@@ -303,7 +322,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 								KeyedMessage<String, String> message = new KeyedMessage<String, String>(
 										topic, recordJSON);
 
-								producer.send(message);
+								getProducer().send(message);
 								feedCounter.incrementFanoutSendCount();
 								feedCounter.incrementCurrentFanoutSendCount();
 								LOG.debug("producer send topic {}", topic);
@@ -438,6 +457,11 @@ public class FeedSink extends AbstractSink implements Configurable {
 		dbTemplate = context.getString("dbTemplate");
 		format = context.getString("format", TRSFileBuilder.BODY_PLACEHOLDER)
 				+ "\n";
+		thrsehold = context.getInteger("thrsehold", 1000);
+		asyncBatch = context.getString("asyncBatch", "1000");
+		asyncTimeout = context.getString("asyncTimeout", "5000");
+		isAsync = context.getBoolean("async", false);
+
 		redisHost = context.getString("redisHost");
 		redisPort = context.getString("redisPort", "6379");
 		subscribersKey = context.getString("subscribersKey");
