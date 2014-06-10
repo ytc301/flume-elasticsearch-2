@@ -52,7 +52,8 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 	protected SinkCounter sinkCounter;
 	protected int batchSize;
 	protected Path bufferDir;
-	protected Path backupDir;
+	protected Path errorDir;
+	protected Path reloadDir;
 
 	@Override
 	public synchronized void start() {
@@ -63,7 +64,7 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 
 	@Override
 	public synchronized void stop() {
-		if(connection.isValid()){
+		if (connection.isValid()) {
 			connection.close();
 		}
 		super.stop();
@@ -74,7 +75,7 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 		try {
 			connection = new TRSConnection();
 			connection.connect(host, port, username, password);
-			connection.setBufferPath(backupDir.toString());
+			connection.setBufferPath(bufferDir.toString());
 		} catch (TRSException e) {
 			throw new RuntimeException(
 					"Unable to create connection to trsserver", e);
@@ -88,10 +89,10 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 	protected void backup(String errorFile, Path buffer) throws IOException {
 		Path errorPath = FileSystems.getDefault().getPath(errorFile);
 		Files.move(errorPath,
-				backupDir.resolve(String.format("%s.%s", System
+				errorDir.resolve(String.format("%s.%s", System
 						.currentTimeMillis(), errorPath.getFileName()
 						.toString())), StandardCopyOption.REPLACE_EXISTING);
-		Files.move(buffer, backupDir.resolve(String.format("%s.%s.%s",
+		Files.move(buffer, errorDir.resolve(String.format("%s.%s.%s",
 				System.currentTimeMillis(), errorPath.getFileName().toString(),
 				buffer.getFileName().toString())),
 				StandardCopyOption.REPLACE_EXISTING);
@@ -104,11 +105,11 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 		pw.flush();
 		sw.flush();
 
-		Files.write(backupDir.resolve(String.format("%s.%s",
+		Files.write(reloadDir.resolve(String.format("%s.%s",
 				System.currentTimeMillis(), "ERR")), sw.toString().getBytes(),
 				StandardOpenOption.CREATE);
 
-		Files.move(buffer, backupDir.resolve(String.format("%s.%s",
+		Files.move(buffer, reloadDir.resolve(String.format("%s.%s",
 				System.currentTimeMillis(), buffer.getFileName().toString())),
 				StandardCopyOption.REPLACE_EXISTING);
 	}
@@ -183,8 +184,10 @@ public abstract class AbstractTRSServerSink extends AbstractSink implements
 
 		bufferDir = FileSystems.getDefault().getPath(
 				context.getString("bufferDir"));
-		backupDir = FileSystems.getDefault().getPath(
-				context.getString("backupDir"));
+		errorDir = FileSystems.getDefault().getPath(
+				context.getString("errorDir"));
+		reloadDir = FileSystems.getDefault().getPath(
+				context.getString("reloadDir"));
 
 		if (sinkCounter == null) {
 			sinkCounter = new SinkCounter(getName());
