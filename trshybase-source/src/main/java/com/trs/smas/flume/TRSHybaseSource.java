@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -54,8 +55,7 @@ import com.trs.hybase.client.params.SearchParams;
  * .headers = IR_GROUPNAME;IR_URLDATE<br/>
  * .from = 2014/04/25 13:30:00<br/>
  * .ngram = 10<br/>
- * .delay = -10<br/>
- * .range = 30
+ * .delay = -10
  * </code>
  * 
  * @since huangshengbo @ Apr 16, 2014 6:04:13 PM
@@ -80,7 +80,6 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 	private String[] headers;
 	private String watermark;
 	private int delay;
-	private int range;
 	private String partition;
 	private Date from;
 	private int step;
@@ -108,7 +107,6 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 		filter = context.getString("filter");
 		watermark = context.getString("watermark");
 		delay = context.getInteger("delay", -10);
-		range = context.getInteger("range", 30);
 		partition = context.getString("partition");
 		try {
 			from = DateUtils.parseDate(context.getString("from"),
@@ -210,13 +208,13 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 					+ (StringUtils.isEmpty(filter) ? "" : " AND (" + filter
 							+ ")");
 
-			String rangeFilter = partition
-					+ ":["
-					+ DateUtil.date2String(DateUtils.addDays(from, -range),
-							FMT_HYBASE_yMd)
-					+ " TO "
-					+ DateUtil.date2String(DateUtils.addDays(from, range),
-							FMT_HYBASE_yMd) + "]";
+			Date beginRange = DateUtils.truncate(from, Calendar.MONTH);
+			Date endRange = DateUtils.addDays(
+					DateUtils.addMonths(beginRange, 1), -1);
+
+			String rangeFilter = partition + ":["
+					+ DateUtil.date2String(beginRange, FMT_HYBASE_yMd) + " TO "
+					+ DateUtil.date2String(endRange, FMT_HYBASE_yMd) + "]";
 
 			SearchParams params = new SearchParams();
 			params.setProperty("search.range.filter", rangeFilter);
