@@ -19,13 +19,19 @@
     bin/flume-ng agent --conf conf --conf-file example.conf --name a1 -Dflume.root.logger=INFO,console -Dflume.monitoring.type=http -Dflume.monitoring.port=34545
 
 ### run production
+
 	nohup bin/flume-ng agent --conf conf --conf-file tasks/runtime/hotspot.conf --name agent -Dflume.log.file=hotspot.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34545 &
 
 	nohup bin/flume-ng agent --conf conf --conf-file tasks/runtime/warehouse.conf --name agent -Dflume.log.file=warehouse.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34546 &
 
 	nohup bin/flume-ng agent --conf conf --conf-file tasks/runtime/hybase.conf --name agent -Dflume.log.file=hybase.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34547 &
 
-	nohup bin/flume-ng agent --conf conf --conf-file tasks/runtime/hybase-to-feed.conf --name agent -Dflume.log.file=feed.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34548 &
+	nohup bin/flume-ng agent --conf conf --conf-file tasks/runtime/sohuweibo.conf --name agent -Dflume.log.file=sohuweibo.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34550 &
+
+	nohup bin/flume-ng agent --conf conf --conf-file tasks/runtime/wangyiweibo.conf --name agent -Dflume.log.file=wangyiweibo.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34551 &
+
+	nohup bin/flume-ng agent --conf conf --conf-file tasks/runtime/qqweibo.conf --name agent -Dflume.log.file=qqweibo.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34552 &
+
 
 ### debug
 	-Dflume.root.logger=DEBUG,LOGFILE
