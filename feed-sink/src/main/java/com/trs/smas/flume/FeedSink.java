@@ -13,14 +13,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.HashMap;
+import java.util.Hashtable;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.Future;
-import java.util.concurrent.RecursiveTask;
+import java.util.concurrent.RecursiveAction;
 
 import kafka.producer.KeyedMessage;
 import kafka.javaapi.producer.Producer;
@@ -111,7 +109,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected Path errorDir;
 	protected Path reloadDir;
 
-	private String tempDB;
 	private Properties props;
 
 	public Producer<String, String> getProducer() {
@@ -160,13 +157,15 @@ public class FeedSink extends AbstractSink implements Configurable {
 				StandardCopyOption.REPLACE_EXISTING);
 	}
 
-	protected void load() {
+	protected String load() {
 		TRSConnection connection = dbPools.getTRSConnection();
-		tempDB = String.format("%s_%s", dbTemplate, System.currentTimeMillis());
+		String tempDB = String.format("%s_%s", dbTemplate,
+				System.currentTimeMillis());
 		try {
 			new TRSDataBase(connection, tempDB).create(dbTemplate + ".*");
 		} catch (TRSException e) {
 			LOG.error("create {} failed. ", tempDB, e);
+			tempDB = null;
 		}
 		try {
 			TRSConnection.setCharset(TRSConstant.TCE_CHARSET_UTF8, false);
@@ -202,6 +201,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 			buffer = null;
 			dbPools.releaseConn(connection);
 		}
+		return tempDB;
 	}
 
 	private void resetCounter() {
@@ -211,7 +211,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 		feedCounter.setCurrentFanoutCount(0);
 	}
 
-	protected void fanout() {
+	protected void fanout(final String db) {
 		resetCounter();
 
 		final long redisBegin = System.currentTimeMillis();
@@ -222,90 +222,81 @@ public class FeedSink extends AbstractSink implements Configurable {
 		final long redisEnd = System.currentTimeMillis();
 		feedCounter.addRedisStatist(redisEnd - redisBegin);
 
-		class FeedTask extends RecursiveTask<Long> {
+		class FeedTask extends RecursiveAction {
 			private static final long serialVersionUID = -7507406545171937726L;
 
 			private int start;
-			private int end;
+			private int length;
 
-			public FeedTask(int start, int end) {
+			public FeedTask(int start, int length) {
 				this.start = start;
-				this.end = end;
+				this.length = length;
+			}
+
+			public void select() {
+				for (int t = start; t <= length; t++) {
+					String topic = subscribersKeys[t];
+					String json = subscribers.get(topic);
+					Map<String, ?> recordMap = null;
+
+					final long trsserverBegin = System.currentTimeMillis();
+					if (json.contains(SEARCH_TYPE)) {
+						SearchFeed search = parseJSON(json, SearchFeed.class);
+						recordMap = search(db, search.getTrsl(), topic);
+					} else if (json.contains(STATISTIC_TYPE)) {
+						StatisticFeed statistic = parseJSON(json,
+								StatisticFeed.class);
+						recordMap = statistic(db, statistic.getTrsl(),
+								statistic.getField(), statistic.getValues(),
+								statistic.isReg(), statistic.getMaxResult(),
+								topic);
+					}
+					final long trsserverEnd = System.currentTimeMillis();
+					feedCounter.addTrsserverStatist(trsserverEnd
+							- trsserverBegin);
+
+					if (recordMap != null && !recordMap.isEmpty()) {
+						final long kafkaBegin = System.currentTimeMillis();
+						send(topic, recordMap);
+						final long kafkaEnd = System.currentTimeMillis();
+						feedCounter.addKafkaStatist(kafkaEnd - kafkaBegin);
+					}
+					feedCounter.incrementCurrentFanoutCount();
+					feedCounter.incrementFanoutCount();
+				}
 			}
 
 			@Override
-			protected Long compute() {
-				long total = 0;
-				boolean canCompute = (end - start) <= thrsehold;
-
-				if (canCompute) {
-
-					for (int t = start; t <= end; t++) {
-						String topic = subscribersKeys[t];
-						String json = subscribers.get(topic);
-						Map<String, ?> recordMap = null;
-
-						final long trsserverBegin = System.currentTimeMillis();
-						if (json.contains(SEARCH_TYPE)) {
-							SearchFeed search = parseJSON(json,
-									SearchFeed.class);
-							recordMap = search(search.getTrsl(), topic);
-						} else if (json.contains(STATISTIC_TYPE)) {
-							StatisticFeed statistic = parseJSON(json,
-									StatisticFeed.class);
-							recordMap = statistic(statistic.getTrsl(),
-									statistic.getField(),
-									statistic.getValues(), statistic.isReg(),
-									statistic.getMaxResult(), topic);
-						}
-						final long trsserverEnd = System.currentTimeMillis();
-						feedCounter.addTrsserverStatist(trsserverEnd
-								- trsserverBegin);
-
-						if (recordMap != null && !recordMap.isEmpty()) {
-							final long kafkaBegin = System.currentTimeMillis();
-							send(topic, recordMap);
-							final long kafkaEnd = System.currentTimeMillis();
-							feedCounter.addKafkaStatist(kafkaEnd - kafkaBegin);
-							feedCounter.incrementCurrentFanoutCount();
-							feedCounter.incrementFanoutCount();
-						}
-					}
-				} else {
-					int middle = (start + end) / 2;
-					FeedTask leftTask = new FeedTask(start, middle);
-					FeedTask rightTask = new FeedTask(middle, end);
-					leftTask.fork();
-					rightTask.fork();
-					total += leftTask.join();
-					total += rightTask.join();
+			protected void compute() {
+				if (length < thrsehold) {
+					select();
+					return;
 				}
-				return total;
+
+				int split = length / 2;
+				invokeAll(new FeedTask(start, split), new FeedTask(start
+						+ split, length - split));
+
 			}
 		}
 
+		FeedTask task = new FeedTask(0, subscribersKeys.length);
+
 		final long begin = System.currentTimeMillis();
 		ForkJoinPool forkJoinPool = new ForkJoinPool();
-		FeedTask task = new FeedTask(0, subscribersKeys.length);
-		Future<Long> result = forkJoinPool.submit(task);
-		try {
-			LOG.info("fork join pool total: " + result.get());
-		} catch (InterruptedException e) {
-			LOG.error("InterruptedException", e);
-		} catch (ExecutionException e) {
-			LOG.error("ExecutionException", e);
-		}
-
+		forkJoinPool.invoke(task);
 		final long end = System.currentTimeMillis();
+
 		feedCounter.setFanoutTime(end - begin);
+		clean(db);
 		feedCounter.incrementFanoutRoundCount();
 	}
 
-	protected void clean() {
-		if (StringHelper.isNotEmpty(tempDB)) {
+	protected void clean(String db) {
+		if (StringHelper.isNotEmpty(db)) {
 			TRSConnection connection = dbPools.getTRSConnection();
 			try {
-				TRSDataBase[] databases = connection.getDataBases(tempDB);
+				TRSDataBase[] databases = connection.getDataBases(db);
 				for (TRSDataBase database : databases) {
 					database.delete();
 				}
@@ -316,17 +307,21 @@ public class FeedSink extends AbstractSink implements Configurable {
 			} finally {
 				dbPools.releaseConn(connection);
 			}
+		} else {
+			LOG.error("clean empty db. ");
+			feedCounter.incrementCleanFailureCount();
 		}
 	}
 
-	private Map<String, String> search(String trsl, String topic) {
-		Map<String, String> record = new HashMap<String, String>();
+	private synchronized Map<String, String> search(String db, String trsl,
+			String topic) {
+		Map<String, String> record = new Hashtable<String, String>();
 
 		TRSConnection conn = dbPools.getTRSConnection();
 
 		TRSResultSet resultSet = null;
 		try {
-			resultSet = conn.executeSelect(tempDB, trsl, false);
+			resultSet = conn.executeSelect(db, trsl, false);
 			for (int i = 0; i < resultSet.getRecordCount(); i++) {
 				resultSet.moveTo(0, i);
 				for (int cc = 0; cc < resultSet.getColumnCount(); cc++) {
@@ -338,23 +333,25 @@ public class FeedSink extends AbstractSink implements Configurable {
 				}
 			}
 		} catch (TRSException e) {
-			LOG.error("trs server select failed.", e);
+			LOG.error("trs server select failed. Topic: " + topic + ", trsl: "
+					+ trsl, e);
 		} finally {
-			resultSet.close();
+			if (resultSet != null && !resultSet.isClosed())
+				resultSet.close();
 			dbPools.releaseConn(conn);
 		}
 		return record;
 	}
 
-	private Map<String, Integer> statistic(String trsl, String field,
-			String values, boolean isReg, int max, String topic) {
-		Map<String, Integer> record = new HashMap<String, Integer>();
+	private synchronized Map<String, Integer> statistic(String db, String trsl,
+			String field, String values, boolean isReg, int max, String topic) {
+		Map<String, Integer> record = new Hashtable<String, Integer>();
 
 		TRSConnection conn = dbPools.getTRSConnection();
 
 		TRSResultSet resultSet = null;
 		try {
-			resultSet = conn.executeSelect(tempDB, trsl, false);
+			resultSet = conn.executeSelect(db, trsl, false);
 			int iClassNum = resultSet.classResult(field, values, 0, "", false,
 					isReg ? TRSConstant.TCM_CLASSREGEXP
 							| TRSConstant.TCM_OUT_BY_COUNT
@@ -366,9 +363,12 @@ public class FeedSink extends AbstractSink implements Configurable {
 				record.put(classInfo.strValue, classInfo.iRecordNum);
 			}
 		} catch (TRSException e) {
-			LOG.error("trs server select failed.", e);
+			LOG.error("trs server statistic failed. Topic: " + topic
+					+ ", trsl: " + trsl, e);
 		} finally {
-			resultSet.close();
+			if (resultSet != null && !resultSet.isClosed()) {
+				resultSet.close();
+			}
 			dbPools.releaseConn(conn);
 		}
 		return record;
@@ -378,9 +378,13 @@ public class FeedSink extends AbstractSink implements Configurable {
 		String recordJSON = toJSON(record);
 
 		if (StringHelper.isNotEmpty(recordJSON)) {
-			getProducer().send(
-					new KeyedMessage<String, String>(topic, recordJSON));
-			incrementTopic(topic);
+			try {
+				getProducer().send(
+						new KeyedMessage<String, String>(topic, recordJSON));
+				incrementTopic(topic);
+			} catch (Exception e) {
+				LOG.error("kafka send error. ", e);
+			}
 		}
 	}
 
@@ -467,9 +471,8 @@ public class FeedSink extends AbstractSink implements Configurable {
 			}
 
 			if (count > 0) {
-				load();
-				fanout();
-				clean();
+				String tempDB = load();
+				fanout(tempDB);
 			}
 
 			transaction.commit();

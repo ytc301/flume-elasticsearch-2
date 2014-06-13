@@ -64,7 +64,7 @@ public class TRSConnectionPool implements ITRSConnectionPool {
 		}
 	}
 
-	private boolean isValid(TRSConnection conn) {
+	private synchronized boolean isValid(TRSConnection conn) {
 		if (conn == null || conn.isClosed()) {
 			return false;
 		}
@@ -103,7 +103,7 @@ public class TRSConnectionPool implements ITRSConnectionPool {
 		return conn;
 	}
 
-	public void destroy() {
+	public synchronized void destroy() {
 		for (TRSConnection conn : freeConnection) {
 			if (isValid(conn)) {
 				conn.close();
@@ -118,11 +118,11 @@ public class TRSConnectionPool implements ITRSConnectionPool {
 		contActive = 0;
 	}
 
-	public boolean isActive() {
+	public synchronized boolean isActive() {
 		return isActive;
 	}
 
-	public void releaseConn(TRSConnection conn) {
+	public synchronized void releaseConn(TRSConnection conn) {
 		if (isValid(conn)) {
 			freeConnection.add(conn);
 			activeConnection.remove(conn);
