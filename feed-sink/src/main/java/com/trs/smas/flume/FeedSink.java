@@ -111,9 +111,14 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 	private Properties props;
 
-	public Producer<String, String> getProducer() {
+	public synchronized Producer<String, String> getProducer() {
 		if (producer == null) {
-			producer = new Producer<String, String>(new ProducerConfig(props));
+			try {
+				producer = new Producer<String, String>(new ProducerConfig(
+						props));
+			} catch (Exception e) {
+				LOG.error("get kafka producer error. ", e);
+			}
 		}
 		return producer;
 	}
@@ -234,7 +239,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 			}
 
 			public void select() {
-				for (int t = start; t <= length; t++) {
+				for (int t = start; t < length; t++) {
 					String topic = subscribersKeys[t];
 					String json = subscribers.get(topic);
 					Map<String, ?> recordMap = null;
@@ -268,14 +273,14 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 			@Override
 			protected void compute() {
-				if (length < thrsehold) {
+				if ((length - start) < thrsehold) {
 					select();
 					return;
 				}
 
-				int split = length / 2;
+				int split = (length - start) / 2;
 				invokeAll(new FeedTask(start, split), new FeedTask(start
-						+ split, length - split));
+						+ split, length));
 
 			}
 		}
