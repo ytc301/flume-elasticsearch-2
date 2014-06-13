@@ -38,9 +38,11 @@ import org.apache.flume.sink.AbstractSink;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.redisson.Config;
 import org.redisson.Redisson;
+import org.redisson.core.RAtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.trs.client.ClassInfo;
 import com.trs.client.RecordReport;
 import com.trs.client.TRSConnection;
 import com.trs.client.TRSConstant;
@@ -48,6 +50,10 @@ import com.trs.client.TRSDataBase;
 import com.trs.client.TRSException;
 import com.trs.client.TRSResultSet;
 import com.trs.dev4.jdk16.utils.StringHelper;
+import com.trs.smas.flume.db.impl.TRSConnectionPool;
+import com.trs.smas.flume.instrumentation.FeedCounter;
+import com.trs.smas.flume.type.SearchFeed;
+import com.trs.smas.flume.type.StatisticFeed;
 
 /**
  * 配置示例:<br/>
@@ -61,11 +67,9 @@ import com.trs.dev4.jdk16.utils.StringHelper;
  * .dbPassword = manager2013admin<br/>
  * .dbTemplate = chuantong_<br/>
  * .format = {body}<br/>
- * .redisHost = 127.0.0.1<br/>
- * .redisPort = 6379<br/>
+ * .redis = 127.0.0.1<br/>
  * .subscribersKey = subscribers<br/>
- * .kafkaHost = 127.0.0.1<br/>
- * .kafkaPort = 9092
+ * .kafka = 127.0.0.1
  * </code>
  * 
  * @since huangshengbo @ Apr 23, 2014 6:58:40 PM
@@ -74,6 +78,9 @@ import com.trs.dev4.jdk16.utils.StringHelper;
 public class FeedSink extends AbstractSink implements Configurable {
 
 	private static final Logger LOG = LoggerFactory.getLogger(FeedSink.class);
+	public static final String SEARCH_TYPE = "search";
+	public static final String STATISTIC_TYPE = "statistic";
+	public static final String MONITOR = "monitor";
 
 	private Path buffer;
 
@@ -93,59 +100,25 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 	protected Redisson redisson;
 
-	protected String redisHost;
-	protected String redisPort;
+	protected String redis;
 	protected String subscribersKey;
 
-	protected String kafkaHost;
-	protected String kafkaPort;
+	protected String kafka;
 
 	protected FeedCounter feedCounter;
 	protected int batchSize;
 	protected Path bufferDir;
-	protected Path backupDir;
+	protected Path errorDir;
+	protected Path reloadDir;
 
 	private String tempDB;
 	private Properties props;
-
-	@Override
-	public synchronized void start() {
-		feedCounter.start();
-		super.start();
-		dbPools = new TRSConnectionPool(dbHost, dbPort, dbUsername, dbPassword,
-				backupDir.toString());
-
-		Config config = new Config();
-		config.setConnectionPoolSize(10);
-		config.addAddress(redisHost + ":" + redisPort);
-		redisson = Redisson.create(config);
-
-		props = new Properties();
-		props.put("metadata.broker.list", kafkaHost + ":" + kafkaPort);
-		props.put("serializer.class", "kafka.serializer.StringEncoder");
-		props.put("request.required.acks", "1");
-		if (isAsync) {
-			// 异步发送
-			props.put("producer.type", "async");
-			// 每次发送多少条
-			props.put("batch.num.messages", asyncBatch);
-			props.put("queue.enqueue.timeout.ms", asyncTimeout);
-		}
-	}
 
 	public Producer<String, String> getProducer() {
 		if (producer == null) {
 			producer = new Producer<String, String>(new ProducerConfig(props));
 		}
 		return producer;
-	}
-
-	@Override
-	public synchronized void stop() {
-		dbPools.destroy();
-		redisson.shutdown();
-		super.stop();
-		feedCounter.stop();
 	}
 
 	public Path selectBuffer(Event e) {
@@ -162,10 +135,10 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected void backup(String errorFile, Path buffer) throws IOException {
 		Path errorPath = FileSystems.getDefault().getPath(errorFile);
 		Files.move(errorPath,
-				backupDir.resolve(String.format("%s.%s", System
+				errorDir.resolve(String.format("%s.%s", System
 						.currentTimeMillis(), errorPath.getFileName()
 						.toString())), StandardCopyOption.REPLACE_EXISTING);
-		Files.move(buffer, backupDir.resolve(String.format("%s.%s.%s",
+		Files.move(buffer, errorDir.resolve(String.format("%s.%s.%s",
 				System.currentTimeMillis(), errorPath.getFileName().toString(),
 				buffer.getFileName().toString())),
 				StandardCopyOption.REPLACE_EXISTING);
@@ -178,11 +151,11 @@ public class FeedSink extends AbstractSink implements Configurable {
 		pw.flush();
 		sw.flush();
 
-		Files.write(backupDir.resolve(String.format("%s.%s",
+		Files.write(reloadDir.resolve(String.format("%s.%s",
 				System.currentTimeMillis(), "ERR")), sw.toString().getBytes(),
 				StandardOpenOption.CREATE);
 
-		Files.move(buffer, backupDir.resolve(String.format("%s.%s",
+		Files.move(buffer, reloadDir.resolve(String.format("%s.%s",
 				System.currentTimeMillis(), buffer.getFileName().toString())),
 				StandardCopyOption.REPLACE_EXISTING);
 	}
@@ -223,7 +196,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 			try {
 				backup(e, buffer);
 			} catch (IOException e1) {
-				LOG.error("LOAD ERROR: backup exception file failed.", e);
+				LOG.error("LOAD ERROR: backup exception file failed.", e1);
 			}
 		} finally {
 			buffer = null;
@@ -231,18 +204,23 @@ public class FeedSink extends AbstractSink implements Configurable {
 		}
 	}
 
-	protected void fanout() {
-		feedCounter.resetFanoutSelectStatist();
-		feedCounter.resetFanoutSendStatist();
+	private void resetCounter() {
+		feedCounter.resetRedisStatist();
+		feedCounter.resetTrsserverStatist();
+		feedCounter.resetKafkaStatist();
 		feedCounter.setCurrentFanoutCount(0);
-		feedCounter.setCurrentFanoutSelectFailureCount(0);
-		feedCounter.setCurrentFanoutSelectSuccessCount(0);
-		feedCounter.setCurrentFanoutSendCount(0);
+	}
 
+	protected void fanout() {
+		resetCounter();
+
+		final long redisBegin = System.currentTimeMillis();
 		final ConcurrentMap<String, String> subscribers = redisson
 				.getMap(subscribersKey);
 		final String[] subscribersKeys = subscribers.keySet().toArray(
 				new String[] {});
+		final long redisEnd = System.currentTimeMillis();
+		feedCounter.addRedisStatist(redisEnd - redisBegin);
 
 		class FeedTask extends RecursiveTask<Long> {
 			private static final long serialVersionUID = -7507406545171937726L;
@@ -262,86 +240,36 @@ public class FeedSink extends AbstractSink implements Configurable {
 
 				if (canCompute) {
 
-					TRSConnection conn = dbPools.getTRSConnection();
-
 					for (int t = start; t <= end; t++) {
 						String topic = subscribersKeys[t];
+						String json = subscribers.get(topic);
+						Map<String, ?> recordMap = null;
 
-						final long innerSelectBegin = System
-								.currentTimeMillis();
-
-						TRSResultSet resultSet = null;
-						try {
-							resultSet = conn.executeSelect(tempDB,
-									subscribers.get(topic), false);
-							feedCounter.incrementFanoutSelectSuccessCount();
-							feedCounter
-									.incrementCurrentFanoutSelectSuccessCount();
-						} catch (TRSException e) {
-							LOG.error("fail to select " + tempDB + " by "
-									+ subscribers.get(topic), e);
-							feedCounter.incrementFanoutSelectFailureCount();
-							feedCounter
-									.incrementCurrentFanoutSelectFailureCount();
-							continue;
+						final long trsserverBegin = System.currentTimeMillis();
+						if (json.contains(SEARCH_TYPE)) {
+							SearchFeed search = parseJSON(json,
+									SearchFeed.class);
+							recordMap = search(search.getTrsl(), topic);
+						} else if (json.contains(STATISTIC_TYPE)) {
+							StatisticFeed statistic = parseJSON(json,
+									StatisticFeed.class);
+							recordMap = statistic(statistic.getTrsl(),
+									statistic.getField(),
+									statistic.getValues(), statistic.isReg(),
+									statistic.getMaxResult(), topic);
 						}
-						final long innerSelectEnd = System.currentTimeMillis();
-						final long innerSelectTotal = innerSelectEnd
-								- innerSelectBegin;
-						feedCounter.addFanoutSelectStatist(innerSelectTotal);
+						final long trsserverEnd = System.currentTimeMillis();
+						feedCounter.addTrsserverStatist(trsserverEnd
+								- trsserverBegin);
 
-						LOG.info("select {} by {}, resultset count {}", tempDB,
-								subscribers.get(topic),
-								resultSet.getRecordCount());
-
-						final long innerSendBegin = System.currentTimeMillis();
-						try {
-							for (int i = 0; i < resultSet.getRecordCount(); i++) {
-								resultSet.moveTo(0, i);
-
-								Map<String, String> record = new HashMap<String, String>();
-								for (int cc = 0; cc < resultSet
-										.getColumnCount(); cc++) {
-									if (resultSet.getColumnName(cc).equals(
-											"IR_CONTENT")) {
-										continue;
-									}
-									record.put(resultSet.getColumnName(cc),
-											resultSet.getString(cc));
-								}
-
-								String recordJSON = null;
-
-								try {
-									recordJSON = new ObjectMapper()
-											.writeValueAsString(record);
-								} catch (Exception e) {
-									LOG.error("record to json failed. ", e);
-								}
-
-								KeyedMessage<String, String> message = new KeyedMessage<String, String>(
-										topic, recordJSON);
-
-								getProducer().send(message);
-								feedCounter.incrementFanoutSendCount();
-								feedCounter.incrementCurrentFanoutSendCount();
-								LOG.debug("producer send topic {}", topic);
-							}
-						} catch (Exception e) {
-							LOG.error("can not read data from resultset "
-									+ resultSet, e);
-							continue;
-						} finally {
-							resultSet.close();
-							dbPools.releaseConn(conn);
+						if (recordMap != null && !recordMap.isEmpty()) {
+							final long kafkaBegin = System.currentTimeMillis();
+							send(topic, recordMap);
+							final long kafkaEnd = System.currentTimeMillis();
+							feedCounter.addKafkaStatist(kafkaEnd - kafkaBegin);
+							feedCounter.incrementCurrentFanoutCount();
+							feedCounter.incrementFanoutCount();
 						}
-						feedCounter.incrementFanoutCount();
-						feedCounter.incrementCurrentFanoutCount();
-
-						final long innerSendEnd = System.currentTimeMillis();
-						final long innerSendTotal = innerSendEnd
-								- innerSendBegin;
-						feedCounter.addFanoutSendStatist(innerSendTotal);
 					}
 				} else {
 					int middle = (start + end) / 2;
@@ -354,7 +282,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 				}
 				return total;
 			}
-
 		}
 
 		final long begin = System.currentTimeMillis();
@@ -370,9 +297,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 		}
 
 		final long end = System.currentTimeMillis();
-		final long total = end - begin;
-		feedCounter.setFanoutTime(total);
-		LOG.info("fanout time is " + total);
+		feedCounter.setFanoutTime(end - begin);
 		feedCounter.incrementFanoutRoundCount();
 	}
 
@@ -392,6 +317,128 @@ public class FeedSink extends AbstractSink implements Configurable {
 				dbPools.releaseConn(connection);
 			}
 		}
+	}
+
+	private Map<String, String> search(String trsl, String topic) {
+		Map<String, String> record = new HashMap<String, String>();
+
+		TRSConnection conn = dbPools.getTRSConnection();
+
+		TRSResultSet resultSet = null;
+		try {
+			resultSet = conn.executeSelect(tempDB, trsl, false);
+			for (int i = 0; i < resultSet.getRecordCount(); i++) {
+				resultSet.moveTo(0, i);
+				for (int cc = 0; cc < resultSet.getColumnCount(); cc++) {
+					if (resultSet.getColumnName(cc).equals("IR_CONTENT")) {
+						continue;
+					}
+					record.put(resultSet.getColumnName(cc),
+							resultSet.getString(cc));
+				}
+			}
+		} catch (TRSException e) {
+			LOG.error("trs server select failed.", e);
+		} finally {
+			resultSet.close();
+			dbPools.releaseConn(conn);
+		}
+		return record;
+	}
+
+	private Map<String, Integer> statistic(String trsl, String field,
+			String values, boolean isReg, int max, String topic) {
+		Map<String, Integer> record = new HashMap<String, Integer>();
+
+		TRSConnection conn = dbPools.getTRSConnection();
+
+		TRSResultSet resultSet = null;
+		try {
+			resultSet = conn.executeSelect(tempDB, trsl, false);
+			int iClassNum = resultSet.classResult(field, values, 0, "", false,
+					isReg ? TRSConstant.TCM_CLASSREGEXP
+							| TRSConstant.TCM_OUT_BY_COUNT
+							: TRSConstant.TCM_OUT_BY_COUNT);
+
+			int to = Math.min(iClassNum, max);
+			for (int i = 0; i < to; i++) {
+				ClassInfo classInfo = resultSet.getClassInfo(i);
+				record.put(classInfo.strValue, classInfo.iRecordNum);
+			}
+		} catch (TRSException e) {
+			LOG.error("trs server select failed.", e);
+		} finally {
+			resultSet.close();
+			dbPools.releaseConn(conn);
+		}
+		return record;
+	}
+
+	private void send(String topic, Map<?, ?> record) {
+		String recordJSON = toJSON(record);
+
+		if (StringHelper.isNotEmpty(recordJSON)) {
+			getProducer().send(
+					new KeyedMessage<String, String>(topic, recordJSON));
+			incrementTopic(topic);
+		}
+	}
+
+	private String toJSON(Map<?, ?> record) {
+		try {
+			return new ObjectMapper().writeValueAsString(record);
+		} catch (Exception e) {
+			LOG.error("record to json failed. ", e);
+			return null;
+		}
+	}
+
+	private <T> T parseJSON(String json, Class<T> valueType) {
+		try {
+			return new ObjectMapper().readValue(json, valueType);
+		} catch (IOException e) {
+			LOG.error("parse feed error. ", e);
+			return null;
+		}
+	}
+
+	private void incrementTopic(String topic) {
+		RAtomicLong count = redisson.getAtomicLong(MONITOR + ":" + topic);
+		count.getAndIncrement();
+	}
+
+	@Override
+	public synchronized void start() {
+		feedCounter.start();
+		super.start();
+		dbPools = new TRSConnectionPool(dbHost, dbPort, dbUsername, dbPassword,
+				bufferDir.toString());
+
+		Config config = new Config();
+		config.setConnectionPoolSize(10);
+		config.addAddress(redis);
+		redisson = Redisson.create(config);
+
+		props = new Properties();
+		props.put("metadata.broker.list", kafka);
+		props.put("serializer.class", "kafka.serializer.StringEncoder");
+		props.put("request.required.acks", "1");
+		if (isAsync) {
+			// 异步发送
+			props.put("producer.type", "async");
+			// 每次发送多少条
+			props.put("batch.num.messages", asyncBatch);
+			props.put("queue.enqueue.timeout.ms", asyncTimeout);
+		}
+	}
+
+	@Override
+	public synchronized void stop() {
+		dbPools.destroy();
+		redisson.shutdown();
+		producer.close();
+		super.stop();
+		feedCounter.stop();
 	}
 
 	/*
@@ -462,19 +509,19 @@ public class FeedSink extends AbstractSink implements Configurable {
 		asyncTimeout = context.getString("asyncTimeout", "5000");
 		isAsync = context.getBoolean("async", false);
 
-		redisHost = context.getString("redisHost");
-		redisPort = context.getString("redisPort", "6379");
+		redis = context.getString("redis");
 		subscribersKey = context.getString("subscribersKey");
 
-		kafkaHost = context.getString("kafkaHost");
-		kafkaPort = context.getString("kafkaPort");
+		kafka = context.getString("kafka");
 
 		batchSize = context.getInteger("batchSize", 1000);
 
 		bufferDir = FileSystems.getDefault().getPath(
 				context.getString("bufferDir"));
-		backupDir = FileSystems.getDefault().getPath(
-				context.getString("backupDir"));
+		errorDir = FileSystems.getDefault().getPath(
+				context.getString("errorDir"));
+		reloadDir = FileSystems.getDefault().getPath(
+				context.getString("reloadDir"));
 
 		if (feedCounter == null) {
 			feedCounter = new FeedCounter(getName());

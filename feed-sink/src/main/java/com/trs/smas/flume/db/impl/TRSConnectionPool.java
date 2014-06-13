@@ -1,4 +1,4 @@
-package com.trs.smas.flume;
+package com.trs.smas.flume.db.impl;
 
 import java.util.List;
 import java.util.Vector;
@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import com.trs.client.TRSConnection;
 import com.trs.client.TRSException;
+import com.trs.smas.flume.db.ITRSConnectionPool;
 
 public class TRSConnectionPool implements ITRSConnectionPool {
 	private static final Logger LOG = LoggerFactory
@@ -24,7 +25,7 @@ public class TRSConnectionPool implements ITRSConnectionPool {
 	private String dbPort;
 	private String dbUsername;
 	private String dbPassword;
-	private String backupDir;
+	private String bufferDir;
 
 	// 空闲连接
 	private List<TRSConnection> freeConnection = new Vector<TRSConnection>();
@@ -36,12 +37,12 @@ public class TRSConnectionPool implements ITRSConnectionPool {
 	}
 
 	public TRSConnectionPool(String dbHost, String dbPort, String dbUsername,
-			String dbPassword, String backupDir) {
+			String dbPassword, String bufferDir) {
 		this.dbHost = dbHost;
 		this.dbPort = dbPort;
 		this.dbUsername = dbUsername;
 		this.dbPassword = dbPassword;
-		this.backupDir = backupDir;
+		this.bufferDir = bufferDir;
 		init();
 	}
 
@@ -52,7 +53,7 @@ public class TRSConnectionPool implements ITRSConnectionPool {
 			try {
 				connection = new TRSConnection();
 				connection.connect(dbHost, dbPort, dbUsername, dbPassword);
-				connection.setBufferPath(backupDir);
+				connection.setBufferPath(bufferDir);
 			} catch (TRSException e) {
 				LOG.error("Unable to create connection to trsserver", e);
 			}
@@ -81,16 +82,19 @@ public class TRSConnectionPool implements ITRSConnectionPool {
 				} else {
 					conn = new TRSConnection();
 					conn.connect(dbHost, dbPort, dbUsername, dbPassword);
-					conn.setBufferPath(backupDir);
+					conn.setBufferPath(bufferDir);
 					contActive++;
 				}
 			} else {
 				wait(this.connTimeOut);
 				conn = getTRSConnection();
 			}
-			if (isValid(conn)) {
-				activeConnection.add(conn);
+			if (!isValid(conn)) {
+				conn = new TRSConnection();
+				conn.connect(dbHost, dbPort, dbUsername, dbPassword);
+				conn.setBufferPath(bufferDir);
 			}
+			activeConnection.add(conn);
 		} catch (InterruptedException e) {
 			LOG.error("thread wait error! ", e);
 		} catch (TRSException e) {

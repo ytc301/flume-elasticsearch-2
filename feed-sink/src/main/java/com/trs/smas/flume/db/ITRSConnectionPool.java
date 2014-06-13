@@ -1,4 +1,4 @@
-package com.trs.smas.flume;
+package com.trs.smas.flume.db;
 
 import com.trs.client.TRSConnection;
 
