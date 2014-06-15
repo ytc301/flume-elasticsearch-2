@@ -94,7 +94,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected String asyncTimeout;
 
 	protected TRSConnectionPool dbPools;
-	private Producer<String, String> producer = null;
+	// private Producer<String, String> producer = null;
 
 	protected Redisson redisson;
 
@@ -110,18 +110,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected Path reloadDir;
 
 	private Properties props;
-
-	public synchronized Producer<String, String> getProducer() {
-		if (producer == null) {
-			try {
-				producer = new Producer<String, String>(new ProducerConfig(
-						props));
-			} catch (Exception e) {
-				LOG.error("get kafka producer error. ", e);
-			}
-		}
-		return producer;
-	}
 
 	public Path selectBuffer(Event e) {
 		if (buffer == null) {
@@ -379,13 +367,15 @@ public class FeedSink extends AbstractSink implements Configurable {
 		return record;
 	}
 
-	private void send(String topic, Map<?, ?> record) {
+	private synchronized void send(String topic, Map<?, ?> record) {
 		String recordJSON = toJSON(record);
 
 		if (StringHelper.isNotEmpty(recordJSON)) {
 			try {
-				getProducer().send(
-						new KeyedMessage<String, String>(topic, recordJSON));
+				Producer<String, String> producer = new Producer<String, String>(
+						new ProducerConfig(props));
+				producer.send(new KeyedMessage<String, String>(topic,
+						recordJSON));
 				incrementTopic(topic);
 			} catch (Exception e) {
 				LOG.error("kafka send error. ", e);
@@ -445,7 +435,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 	public synchronized void stop() {
 		dbPools.destroy();
 		redisson.shutdown();
-		producer.close();
 		super.stop();
 		feedCounter.stop();
 	}
