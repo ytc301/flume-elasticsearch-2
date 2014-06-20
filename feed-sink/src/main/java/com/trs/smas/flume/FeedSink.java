@@ -473,6 +473,7 @@ public class FeedSink extends AbstractSink implements Configurable {
 			transaction.commit();
 		} catch (RedisException re) {
 			try {
+				redisson = getRedisson();
 				transaction.rollback();
 				LOG.error("redis exception. ", re);
 				return Status.BACKOFF;
