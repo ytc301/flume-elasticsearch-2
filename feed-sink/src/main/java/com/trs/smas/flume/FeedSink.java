@@ -26,7 +26,6 @@ import kafka.producer.ProducerConfig;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Channel;
-import org.apache.flume.ChannelException;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.EventDeliveryException;
@@ -94,7 +93,6 @@ public class FeedSink extends AbstractSink implements Configurable {
 	protected String asyncTimeout;
 
 	protected TRSConnectionPool dbPools;
-	// private Producer<String, String> producer = null;
 
 	protected Redisson redisson;
 
@@ -455,13 +453,10 @@ public class FeedSink extends AbstractSink implements Configurable {
 			for (count = 0; count < batchSize; count++) {
 				Event event = channel.take();
 				if (event == null) {
+					status = Status.BACKOFF;
 					break;
 				}
 				TRSFileBuilder.append(selectBuffer(event), event, format);
-			}
-
-			if (count == 0) {
-				status = Status.BACKOFF;
 			}
 
 			if (count > 0) {
@@ -470,16 +465,16 @@ public class FeedSink extends AbstractSink implements Configurable {
 			}
 
 			transaction.commit();
-		} catch (ChannelException e) {
-			transaction.rollback();
-			LOG.error(
-					"Unable to get event from" + " channel "
-							+ channel.getName(), e);
-			return Status.BACKOFF;
-		} catch (Exception ex) {
-			transaction.rollback();
-			LOG.error("Failed to deliver event. Exception follows.", ex);
-			throw new EventDeliveryException("Failed to deliver event", ex);
+		} catch (Exception e) {
+			try {
+				transaction.rollback();
+				LOG.error(
+						"Unable to get event from" + " channel "
+								+ channel.getName(), e);
+				return Status.BACKOFF;
+			} catch (Exception e1) {
+				LOG.error("Rollback Exception. ", e1);
+			}
 		} finally {
 			transaction.close();
 		}
