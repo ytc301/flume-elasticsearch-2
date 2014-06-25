@@ -22,6 +22,7 @@
 	        <module>trsserver-cleaner</module>
 	        <module>date-format-interceptor</module>
 	        <module>time-filter-interceptor</module>
+		<module>distinct-interceptor</module>
   </modules>
 
 	<properties>
