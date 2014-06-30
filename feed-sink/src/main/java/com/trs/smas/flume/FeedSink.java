@@ -467,29 +467,16 @@ public class FeedSink extends AbstractSink implements Configurable {
 			if (count > 0) {
 				String tempDB = load();
 				fanout(tempDB);
-
 			}
 
 			transaction.commit();
-		} catch (RedisException re) {
-			try {
-				redisson = getRedisson();
-				transaction.rollback();
-				LOG.error("redis exception. ", re);
-				return Status.BACKOFF;
-			} catch (Exception e1) {
-				LOG.error("Rollback Exception. ", e1);
-			}
 		} catch (Exception e) {
-			try {
-				transaction.rollback();
-				LOG.error(
-						"Unable to get event from" + " channel "
-								+ channel.getName(), e);
-				return Status.BACKOFF;
-			} catch (Exception e1) {
-				LOG.error("Rollback Exception. ", e1);
-			}
+			transaction.rollback();
+			LOG.error(
+					"Unable to get event from" + " channel "
+							+ channel.getName(), e);
+			throw new EventDeliveryException("Unable to get event from"
+					+ " channel " + channel.getName(), e);
 		} finally {
 			transaction.close();
 		}

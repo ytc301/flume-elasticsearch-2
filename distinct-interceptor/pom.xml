@@ -7,7 +7,7 @@
 		<artifactId>flume-plugins</artifactId>
 		<version>1.0</version>
 	</parent>
-	
+
 	<artifactId>distinct-interceptor</artifactId>
 	<version>1.0</version>
 	<packaging>jar</packaging>
@@ -24,6 +24,12 @@
 			<groupId>com.trs.dev4</groupId>
 			<artifactId>trsdev4-infra-jdk16</artifactId>
 			<version>3.5r76325</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.rocksdb</groupId>
+			<artifactId>rocksdb</artifactId>
+			<version>1.0</version>
 		</dependency>
 
 		<dependency>
