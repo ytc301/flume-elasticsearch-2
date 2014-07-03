@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Lists;
 import com.trs.dev4.jdk16.utils.DateUtil;
+import com.trs.dev4.jdk16.utils.StringHelper;
 
 public class DistinctInterceptor implements Interceptor {
 	static {
@@ -85,6 +86,10 @@ public class DistinctInterceptor implements Interceptor {
 
 		StringBuffer sb = new StringBuffer();
 		for (String key : filter.split(";")) {
+			if (StringHelper.isEmpty(headers.get(key))) {
+				sb = null;
+				return event;
+			}
 			sb.append(headers.get(key).trim());
 		}
 		try {
