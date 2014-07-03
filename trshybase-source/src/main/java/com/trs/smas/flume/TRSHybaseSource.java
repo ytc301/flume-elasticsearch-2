@@ -35,6 +35,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.trs.dev4.jdk16.utils.DateUtil;
+import com.trs.dev4.jdk16.utils.StringHelper;
 import com.trs.hybase.client.TRSConnection;
 import com.trs.hybase.client.TRSException;
 import com.trs.hybase.client.TRSExport;
@@ -238,7 +239,10 @@ public class TRSHybaseSource extends AbstractSource implements PollableSource,
 							Map<String, String> header = new HashMap<String, String>(
 									headers.length);
 							for (String key : headers) {
-								header.put(key, record.getString(key));
+								String value = record.getString(key);
+								header.put(key,
+										StringHelper.isEmpty(value) ? ""
+												: value);
 							}
 							buffer.add(EventBuilder.withBody(
 									String.format(body, values.toArray())
