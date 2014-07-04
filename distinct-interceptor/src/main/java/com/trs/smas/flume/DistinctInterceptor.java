@@ -4,7 +4,6 @@ import java.io.UnsupportedEncodingException;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 import org.apache.flume.Context;
 import org.apache.flume.Event;
@@ -78,7 +77,7 @@ public class DistinctInterceptor implements Interceptor {
 	public Event intercept(Event event) {
 		Map<String, String> headers = event.getHeaders();
 
-		if (Pattern.compile(headers.get(skip_field)).matcher(skip_value).find()) {
+		if (headers.get(skip_field).contains(skip_value)) {
 			return event;
 		}
 
