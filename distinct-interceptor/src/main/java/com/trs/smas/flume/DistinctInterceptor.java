@@ -34,6 +34,7 @@ public class DistinctInterceptor implements Interceptor {
 	private String skip_field;
 	private String skip_value;
 	private String filter;
+	private String filter_with_url;
 	private String identifying;
 	private String db_path;
 	private String redis;
@@ -42,10 +43,12 @@ public class DistinctInterceptor implements Interceptor {
 	private Redisson redisson = null;
 
 	public DistinctInterceptor(String skip_field, String skip_value,
-			String filter, String identifying, String db_path, String redis) {
+			String filter, String filter_with_url, String identifying,
+			String db_path, String redis) {
 		this.skip_field = skip_field;
 		this.skip_value = skip_value;
 		this.filter = filter;
+		this.filter_with_url = filter_with_url;
 		this.identifying = identifying;
 		this.db_path = db_path;
 		this.redis = redis;
@@ -91,6 +94,12 @@ public class DistinctInterceptor implements Interceptor {
 			}
 			sb.append(headers.get(key).trim());
 		}
+
+		if (StringHelper.isNotEmpty(filter_with_url)
+				&& StringHelper.isNotEmpty(headers.get(filter_with_url))) {
+			sb.append(getURLInfo(headers.get(filter_with_url)));
+		}
+
 		try {
 			byte[] value = db.get(sb.toString().getBytes("UTF-8"));
 			if (value == null) {
@@ -109,10 +118,26 @@ public class DistinctInterceptor implements Interceptor {
 		return event;
 	}
 
+	private String getURLInfo(String url) {
+		String target = "";
+
+		if(url.indexOf("/") != -1){
+			String temp = url.replaceAll("://", "");
+			target = temp.substring(0, temp.lastIndexOf("/"));
+		}
+		
+		return target;
+	}
+
 	public List<Event> intercept(List<Event> events) {
 		List<Event> out = Lists.newArrayList();
 		for (Event event : events) {
-			Event outEvent = intercept(event);
+			Event outEvent = null;
+			try {
+				outEvent = intercept(event);
+			} catch (Exception e) {
+				continue;
+			}
 			if (outEvent != null) {
 				out.add(outEvent);
 			}
@@ -125,6 +150,7 @@ public class DistinctInterceptor implements Interceptor {
 		private String skip_field;
 		private String skip_value;
 		private String filter;
+		private String filter_with_url;
 		private String identifying;
 		private String db_path;
 		private String redis;
@@ -140,6 +166,7 @@ public class DistinctInterceptor implements Interceptor {
 			skip_field = context.getString("skip_field");
 			skip_value = context.getString("skip_value");
 			filter = context.getString("filter");
+			filter_with_url = context.getString("filter_with_url", null);
 			identifying = context.getString("identifying");
 			db_path = context.getString("db_path");
 			redis = context.getString("redis");
@@ -152,7 +179,7 @@ public class DistinctInterceptor implements Interceptor {
 		 */
 		public Interceptor build() {
 			return new DistinctInterceptor(skip_field, skip_value, filter,
-					identifying, db_path, redis);
+					filter_with_url, identifying, db_path, redis);
 		}
 	}
 
