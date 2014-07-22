@@ -87,7 +87,7 @@ public class TRSServerSource extends AbstractSource implements PollableSource,
 		username = context.getString("username", "system");
 		password = context.getString("password", "manager");
 		database = context.getString("database");
-		filter = context.getString("filter");
+		filter = context.getString("filter", "");
 		watermarkField = context.getString("watermark");
 		identifierField = context.getString("identifierField");
 		from = context.getString("from");
