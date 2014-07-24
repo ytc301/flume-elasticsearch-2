@@ -2,27 +2,17 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<groupId>com.trs.smas.flume</groupId>
+	<groupId>com.elasticsearch.flume</groupId>
 	<artifactId>flume-plugins</artifactId>
 	<version>1.0</version>
 	<packaging>pom</packaging>
 
-	<name>Flume Plugins For SMAS</name>
+	<name>Flume Plugins For elasticsearch</name>
 	<url>http://maven.apache.org</url>
 
 	<modules>
-		<module>common</module>
-		<module>trshybase-source</module>
-		<module>trsserver-sink</module>
-		<module>feed-sink</module>
-		<module>regex-mapper-interceptor</module>
-	        <module>trsserver-source</module>
-		<module>nlp-interceptor</module>
-	        <module>trsserver-weibo-userinfo-source</module>
-	        <module>trsserver-cleaner</module>
-	        <module>date-format-interceptor</module>
-	        <module>time-filter-interceptor</module>
-		<module>distinct-interceptor</module>
+		<module>file-source</module>
+		<module>elasticsearch-sink</module>
   </modules>
 
 	<properties>
