@@ -9,7 +9,9 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.RandomAccessFile;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -19,6 +21,7 @@ import org.apache.flume.Event;
 import org.apache.flume.EventDeliveryException;
 import org.apache.flume.PollableSource;
 import org.apache.flume.conf.Configurable;
+import org.apache.flume.event.EventBuilder;
 import org.apache.flume.instrumentation.SourceCounter;
 import org.apache.flume.source.AbstractSource;
 import org.slf4j.Logger;
@@ -88,36 +91,45 @@ public class TRSFileSource extends AbstractSource implements PollableSource,
 		Status status = Status.READY;
 		List<Event> buffer = new ArrayList<Event>(batchSize);
 		
+		HashMap<String, String> dataMap = new HashMap<String, String>();
+		
 		for(File file : files) {
-			int nBuffer=(int) (file.length() > 0 ? file.length():1024);
-			BufferedReader in;
+
 			try{
-				BufferedInputStream bis = new BufferedInputStream(new FileInputStream(new File(file.getAbsolutePath())));
-				in = new BufferedReader(new InputStreamReader(bis, "GBK"), nBuffer);
-				
-				while (in.ready()) {								
-	                String line = in.readLine();	               
+				RandomAccessFile raf = new RandomAccessFile(file, "rw");
+				String line = raf.readLine();
+				while (line != null && buffer.size() < this.batchSize) {								
+	               	               
 	                if(line.trim().equals("")) {
 	                	continue;
 	                }
 	                
 	                if(line.equals("<REC>")) { 
 	                	/* 每条记录的开始 */
-	                	
+	                	dataMap = new HashMap<String, String>();
 	                	continue;
 	                } else {
 	                	/* 记录中间，需要将读取出的key和value放入map中 */
 	                	Pattern pattern = Pattern.compile("<(.+?)>=(.+?|$)$");
 	                	Matcher matcher = pattern.matcher(line);
 	            		if(matcher.find()) {
-//	            			strKey = matcher.group(1); 
-//	            			strValue = matcher.group(2);
+	            			dataMap.put(matcher.group(1), matcher.group(2));
 	            		}          		
-	            		
+	            		buffer.add(EventBuilder.withBody(null, dataMap));
+	            		if(buffer.size() >= this.batchSize) {
+	            			/* 如果文件没有读完，但buffer中event数量到达上限，则记录文件读取位置，并跳出循环 */
+//	            			this.position = raf.getFilePointer();
+	            			break;
+	            		}
 	                }
+	                line = raf.readLine();
 	            }
-			}catch(IOException e) {
+				raf.close();
+			} catch(IOException e) {
 				LOG.error(" file io exception. ", e);
+				break;
+			} catch(Exception e) {
+				LOG.error(" exception. ", e);
 				break;
 			}
 		}

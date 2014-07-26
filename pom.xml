@@ -13,6 +13,7 @@
 	<modules>
 		<module>file-source</module>
 		<module>elasticsearch-sink</module>
+		<module>file-common</module>
   </modules>
 
 	<properties>
