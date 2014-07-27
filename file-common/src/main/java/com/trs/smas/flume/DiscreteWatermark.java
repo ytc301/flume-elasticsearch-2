@@ -29,18 +29,39 @@ public class DiscreteWatermark implements Serializable {
 
 	private ArrayList<File> fileList;
 	private long startPosition = 0L;
-	private File currentFile;
+	private File currentFile = null;
+	private int pointer = 0;
 
-	public DiscreteWatermark(ArrayList<File> fileList, File currentFile, long startPosition) {
+	public DiscreteWatermark(ArrayList<File> fileList, long startPosition) {
 		this.fileList = fileList;
-		this.currentFile = currentFile;
 		this.startPosition = startPosition;
+		if(this.fileList.size() > pointer)
+			this.currentFile = fileList.get(pointer);
 	}
 
 
-	public void rise(File currentFile, long startPosition) {
-		this.currentFile = currentFile;
+	/**
+	 * 文件没有读完，提升当前文件的水位线
+	 * 
+	 * @param startPosition
+	 */
+	public void rise(long startPosition) {
+		if(this.fileList.size() > pointer) 
+			this.currentFile = this.fileList.get(pointer);
+		else
+			this.currentFile = null;
 		this.startPosition = startPosition;
+	}
+	
+	/**
+	 * 提升水位线，新文件从0开始读取
+	 */
+	public void rise() {
+		if(this.fileList.size() > pointer) 
+			this.currentFile = this.fileList.get(pointer);
+		else
+			this.currentFile = null;
+		this.startPosition = 0;
 	}
 
 	public void add(File file) {
