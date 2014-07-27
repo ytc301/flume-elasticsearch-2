@@ -3,12 +3,8 @@
  */
 package com.file.elasticsearch;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -38,11 +34,11 @@ import org.slf4j.LoggerFactory;
  * @since 
  * 
  */
-public class TRSFileSource extends AbstractSource implements PollableSource,
+public class FileSource extends AbstractSource implements PollableSource,
 		Configurable {
 
 	private static final Logger LOG = LoggerFactory
-			.getLogger(TRSFileSource.class);
+			.getLogger(FileSource.class);
 
 	private String path;
 	

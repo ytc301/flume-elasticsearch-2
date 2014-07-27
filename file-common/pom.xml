@@ -7,11 +7,11 @@
 		<artifactId>flume-plugins</artifactId>
 		<version>1.0</version>
 	</parent>
-	<artifactId>common</artifactId>
+	<artifactId>file-common</artifactId>
 	<version>1.0</version>
 	<packaging>jar</packaging>
 
-	<name>Common</name>
+	<name>file-common</name>
 	<url>http://maven.apache.org</url>
 
 	<properties>
