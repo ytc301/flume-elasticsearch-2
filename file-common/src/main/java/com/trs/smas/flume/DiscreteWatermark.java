@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.commons.lang.SerializationUtils;
 
@@ -27,12 +28,12 @@ public class DiscreteWatermark implements Serializable {
 	 */
 	private static final long serialVersionUID = 1L;
 
-	private ArrayList<File> fileList;
+	private List<File> fileList;
 	private long startPosition = 0L;
 	private File currentFile = null;
 	private int pointer = 0;
 
-	public DiscreteWatermark(ArrayList<File> fileList, long startPosition) {
+	public DiscreteWatermark(List<File> fileList, long startPosition) {
 		this.fileList = fileList;
 		this.startPosition = startPosition;
 		if(this.fileList.size() > pointer)
@@ -67,6 +68,10 @@ public class DiscreteWatermark implements Serializable {
 	public void add(File file) {
 		this.fileList.add(file);
 	}
+	
+	public void remove(File file) {
+		this.fileList.remove(file);
+	}
 
 	/** 
 	 * 从文件加载watermark
@@ -86,7 +91,7 @@ public class DiscreteWatermark implements Serializable {
 		Files.write(path, SerializationUtils.serialize(this), StandardOpenOption.CREATE);
 	}
 	
-	public ArrayList<File> getFileList() {
+	public List<File> getFileList() {
 		return fileList;
 	}
 

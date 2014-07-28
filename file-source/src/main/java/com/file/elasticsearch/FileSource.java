@@ -89,7 +89,7 @@ public class FileSource extends AbstractSource implements PollableSource,
 		}
 		
 		if (watermark == null) {
-			watermark = new DiscreteWatermark((ArrayList<File>) Arrays.asList(this.files), 0);
+			watermark = new DiscreteWatermark(Arrays.asList(this.files), 0);
 		}
 		
 		sourceCounter.start();
@@ -133,14 +133,33 @@ public class FileSource extends AbstractSource implements PollableSource,
 		this.checkFile();
 		if(watermark.getCurrentFile() != null) {
 			try{
-				RandomAccessFile raf = new RandomAccessFile(watermark.getCurrentFile(), "rw");
+				RandomAccessFile raf = new RandomAccessFile(watermark.getCurrentFile(), "r");
+				if(raf.length() <= 0) {
+					/* 文件长度为0，等待读取下一文件 */
+					LOG.error(watermark.getCurrentFile().getAbsolutePath() + " length is 0 ");
+					watermark.rise();
+					raf.close();
+					return Status.BACKOFF;
+				}
+				LOG.error(" start read : " + watermark.getCurrentFile().getAbsolutePath() + " at positon : " + watermark.getStartPosition());	
 				raf.seek(watermark.getStartPosition());
-				String line = raf.readLine();
-				while (line != null && buffer.size() < this.batchSize) {								  	               	
+				String line = "";
+				while ((line = raf.readLine()) != null && buffer.size() < this.batchSize) {								  	               	
 	                if(line.trim().equals("")) 
 	                	continue;	            
 	                
 	                if(line.equals("<REC>")) { 
+	                	if(!dataMap.isEmpty())
+	                		buffer.add(EventBuilder.withBody(null, dataMap));
+	            		if(buffer.size() >= this.batchSize) {
+	            			/* 如果文件没有读完，但buffer中event数量到达上限，则记录文件读取位置，并跳出循环 */
+	            			watermark.rise(raf.getFilePointer());
+	            			LOG.error(watermark.getCurrentFile().getAbsolutePath() + " not read over, "
+	            					+ "but batch is overflow. next time start position is " + raf.getFilePointer() );
+	            			raf.close();
+	            			this.processData(buffer);
+	            			return Status.READY;
+	            		}
 	                	/* 每条记录的开始 */
 	                	dataMap = new HashMap<String, String>();
 	                	continue;
@@ -150,35 +169,31 @@ public class FileSource extends AbstractSource implements PollableSource,
 	                	Matcher matcher = pattern.matcher(line);
 	            		if(matcher.find()) {
 	            			dataMap.put(matcher.group(1), matcher.group(2));
-	            		}          		
-	            		buffer.add(EventBuilder.withBody(null, dataMap));
-	            		if(buffer.size() >= this.batchSize) {
-	            			/* 如果文件没有读完，但buffer中event数量到达上限，则记录文件读取位置，并跳出循环 */
-	            			watermark.rise(raf.getFilePointer());
-	            			raf.close();
-	            			break;
-	            		}
+	            		}          		            		
 	                }
-	                line = raf.readLine();
 	            }
+				LOG.error(watermark.getCurrentFile().getAbsolutePath() + " read success. ");
 				watermark.rise();
 				raf.close();
 			} catch(IOException e) {
-				LOG.error(" file io exception. ", e);			
+				LOG.error(" file io exception. ", e);	
+				return Status.BACKOFF;
 			} catch(Exception e) {
 				LOG.error(" exception. ", e);
+				return Status.BACKOFF;
 			}
 		} else {
-			status = Status.BACKOFF;
-			return status;
+			return Status.BACKOFF;
 		}
-		
-		
+			
+		this.processData(buffer);
+		return status;
+	}
+	
+	private void processData(List<Event> buffer) {
 		getChannelProcessor().processEventBatch(buffer);
 		sourceCounter.incrementAppendBatchAcceptedCount();
 		sourceCounter.addToEventAcceptedCount(buffer.size());
-
-		return status;
 	}
 
 }
