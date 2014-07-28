@@ -14,11 +14,11 @@
 
 ### run demo
 
-    bin/flume-ng agent --conf conf --conf-file example.conf --name a1 -Dflume.root.logger=INFO,console -Dflume.monitoring.type=http -Dflume.monitoring.port=34545
-
+    bin/flume-ng agent --conf conf --conf-file conf/flume-elasticsearch.conf --name a1 -Dflume.log.file=trs.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34545
+    
 ### run production
 
-	nohup bin/flume-ng agent --conf conf --conf-file conf/flume-elasticsearch.conf --name agent -Dflume.log.file=elasticsearch.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34545 &
+	nohup bin/flume-ng agent --conf conf --conf-file conf/flume-elasticsearch.conf --name agent -Dflume.log.file=trs.log -Dflume.monitoring.type=http -Dflume.monitoring.port=34545 &
 
 
 ### debug
